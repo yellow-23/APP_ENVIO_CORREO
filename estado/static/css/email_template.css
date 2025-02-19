@@ -1,0 +1,63 @@
+
+      body {
+        font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+        font-size: 15px;
+        line-height: 1.3;
+        margin: 0;
+        width: 100%;
+        padding: 0;
+      }
+      .container {
+        margin: 0 auto;
+        border-spacing: 0;
+        border-collapse: collapse;
+        background-color: #efefef;
+        max-width: 750px;
+        border-radius: 4px;
+        padding: 4px;
+      }
+      .content-text {
+        background-color: #ffffff;
+        padding: 0;
+        border-radius: 4px;
+      }
+      .reporte-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 0;
+        border: 1px solid #000000;
+        margin-bottom: 10px;
+        table-layout: fixed;
+      }
+      .reporte-table th,
+      .reporte-table td {
+        font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+        font-size: 13px;
+        line-height: 1.2;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: normal;
+        word-wrap: break-word;
+      }
+      .reporte-table th {
+        background-color: #1d8649;
+        color: #ffffff;
+        font-weight: normal;
+        font-size: 15px;
+      }
+      .dominio-section {
+        margin: 4px 0;
+        padding: 4px;
+        background-color: #f9f9f9;
+        border-radius: 4px;
+        margin-bottom: 15px;
+      }
+      .firma {
+        font-size: 12px;
+        line-height: 1.2;
+        color: #333333;
+      }
+    

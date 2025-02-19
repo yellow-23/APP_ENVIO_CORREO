@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Selector de Proyectos</title>
+    <link rel="stylesheet" href="../static/css/style_menu.css" />
+  </head>
+  <body>
+    <h1>Selector de Proyectos</h1>
+    <p>Seleccione el proyecto de automatización de correos que quiere usar:</p>
+    <div class="button-container">
+      {% for project_id, config in projects.items() %}
+      <form action="/iniciar/{{ project_id }}" method="get">
+        <button type="submit" class="btn {{ project_id }}">
+          {{ config.name }}
+        </button>
+      </form>
+      {% endfor %}
+    </div>
+  </body>
+</html>

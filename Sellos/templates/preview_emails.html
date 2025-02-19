@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vista Previa de Correos - CMPC</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background-color: #f0f7f0;
+      }
+      .email-preview-card {
+        border-left: 4px solid #28a745;
+        margin-bottom: 20px;
+        padding: 15px;
+        background-color: white;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      }
+      .reports-table {
+        font-size: 0.9em;
+        width: 100%;
+        margin-top: 10px;
+      }
+      .reports-table th {
+        background-color: #f8f9fa;
+        padding: 8px;
+        border-bottom: 2px solid #dee2e6;
+      }
+      .reports-table td,
+      .reports-table th {
+        padding: 8px;
+        vertical-align: top;
+      }
+      .loading-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+      }
+      .loading-content {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        color: white;
+      }
+      .spinner {
+        width: 50px;
+        height: 50px;
+        border: 5px solid #28a745;
+        border-top: 5px solid white;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      .domain-section {
+        margin-top: 15px;
+      }
+      .domain-header {
+        color: #28a745;
+        font-weight: bold;
+        border-left: 4px solid #28a745;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loadingOverlay" class="loading-overlay">
+      <div class="loading-content">
+        <div class="spinner"></div>
+        <h3>Enviando correos...</h3>
+        <p id="loadingStatus">Conectando al servidor de correo</p>
+      </div>
+    </div>
+    <div class="container py-5">
+      <div class="card">
+        <div class="card-header bg-success text-white">
+          <h3 class="mb-0">Vista Previa de Correos a Enviar</h3>
+        </div>
+        <div class="card-body">
+          <div class="alert alert-info">
+            <strong>Cuenta de envío:</strong> {{ preview.account_type }} ({{
+            preview.sender_email }})
+          </div>
+
+          <h4 class="mb-4">Resumen de envíos por Data Owner</h4>
+
+          {% for owner, reports in preview.recipients.items() %}
+          <div class="email-preview-card">
+            <h5 class="mb-3">{{ owner }}</h5>
+            <p class="text-muted mb-4">Total reportes: {{ reports|length }}</p>
+
+            {% set grouped_reports = {} %} {% for report in reports %} {% if
+            report.dominio not in grouped_reports %} {% set _ =
+            grouped_reports.update({report.dominio: []}) %} {% endif %} {% set _
+            = grouped_reports[report.dominio].append(report) %} {% endfor %} {%
+            for dominio, domain_reports in grouped_reports|dictsort %}
+            <div class="mb-4">
+              <h6 class="bg-light p-2 rounded text-success">
+                <i class="fas fa-folder-open"></i> {{ dominio }}
+              </h6>
+              <div class="table-responsive">
+                <table class="table table-sm table-bordered reports-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 35%">Título</th>
+                      <th style="width: 25%">Área PBI</th>
+                      <th style="width: 20%">Responsable</th>
+                      <th style="width: 20%">Sellos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for report in domain_reports|sort(attribute='titulo') %}
+                    <tr>
+                      <td>{{ report.titulo }}</td>
+                      <td>{{ report.workspace }}</td>
+                      <td>{{ report.responsable }}</td>
+                      <td>{{ report.sellos }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endfor %}
+
+          <div class="d-flex justify-content-between mt-4">
+            <a href="/confirm_send" class="btn btn-secondary">
+              <i class="fas fa-arrow-left"></i> Volver
+            </a>
+            <form action="/send_emails" method="post" id="sendForm">
+              <input
+                type="hidden"
+                name="email_option"
+                value="{{ preview.account_type }}"
+              />
+              <button
+                type="submit"
+                class="btn btn-success"
+                onclick="showLoading()"
+              >
+                Confirmar y Enviar <i class="fas fa-paper-plane"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      function showLoading() {
+        document.getElementById("loadingOverlay").style.display = "block";
+        updateLoadingStatus();
+      }
+
+      function updateLoadingStatus() {
+        const statusElement = document.getElementById("loadingStatus");
+        let dots = "";
+        let step = 0;
+        const steps = [
+          "Conectando al servidor de correo",
+          "Preparando correos",
+          "Enviando correos",
+          "Actualizando registros",
+        ];
+
+        setInterval(() => {
+          dots = dots.length >= 3 ? "" : dots + ".";
+          statusElement.textContent = steps[step % steps.length] + dots;
+          if (dots === "") {
+            step++;
+          }
+        }, 500);
+      }
+
+      // Prevenir doble envío
+      document.getElementById("sendForm").onsubmit = function () {
+        document.querySelector('button[type="submit"]').disabled = true;
+        showLoading();
+        return true;
+      };
+    </script>
+  </body>
+</html>

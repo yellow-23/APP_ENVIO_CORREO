@@ -1,0 +1,80 @@
+/* Estilos generales */
+body {
+  font-family: Arial, sans-serif;
+  text-align: center;
+  margin: 50px;
+  background-color: #f9f9f9; /* Fondo suave para mejor visibilidad */
+}
+
+h1 {
+  color: #333;
+}
+
+p {
+  font-size: 18px;
+  color: #555;
+}
+
+/* Contenedor de botones */
+.button-container {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 15px;
+  margin-top: 20px;
+}
+
+/* Estilos generales de los botones */
+.btn {
+  display: inline-block;
+  width: 200px;
+  height: 60px;
+  font-size: 18px;
+  font-weight: bold;
+  text-align: center;
+  border: none;
+  cursor: pointer;
+  border-radius: 5px;
+  color: white;
+  transition: opacity 0.3s, transform 0.2s;
+  text-decoration: none;
+}
+
+/* Efecto hover para todos los botones */
+.btn:hover {
+  opacity: 0.8;
+  transform: scale(1.05); /* Pequeño efecto de agrandado */
+}
+
+/* Clases para los colores de cada botón */
+.estado {
+  background-color: yellow; /* Azul */
+}
+
+.sellos {
+  background-color: #28a745; /* Verde */
+}
+
+.usabilidad {
+  background-color: #ff0000; /* Rojo */
+}
+
+
+/* Formularios dentro de botones */
+form {
+  display: inline-block;
+}
+
+/* Responsive: Asegura que los botones se adapten en pantallas pequeñas */
+@media (max-width: 600px) {
+  .button-container {
+      flex-direction: column;
+      align-items: center;
+  }
+
+  .btn {
+      width: 90%; /* Ocupa más espacio en móviles */
+      height: 50px;
+      line-height: normal;
+  }
+}

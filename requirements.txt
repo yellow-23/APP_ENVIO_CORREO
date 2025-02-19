@@ -1,0 +1,16 @@
+fastapi
+pandas
+smtplib
+email
+os
+werkzeug
+logging
+subprocess
+time
+sys
+socket
+psutil
+signal
+starlette
+jinja2
+datetime
