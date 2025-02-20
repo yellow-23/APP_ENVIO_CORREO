@@ -48,11 +48,11 @@ p {
 
 /* Clases para los colores de cada botón */
 .estado {
-  background-color: yellow; /* Azul */
+  background-color: #ffd700; /* Azul */
 }
 
 .sellos {
-  background-color: #28a745; /* Verde */
+  background-color: #ff8800; /* Verde */
 }
 
 .usabilidad {
