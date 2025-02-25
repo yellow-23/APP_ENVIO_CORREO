@@ -278,27 +278,36 @@ def process_email_data(df):
 
                 # Determinar los estados pendientes
                 pendientes = []
+
+                # Verificar cada posible estado pendiente y agregar todos los aplicables
+
+                # 1. Si el reporte está vacío o si no está ni promovido ni certificado
                 if (
-                    pd.isna(row[endorsement_col])
-                    or row[endorsement_col].strip() == ""
-                    or row[endorsement_col] == "nan"
-                ):
-                    pendientes.append("por certificar")
-                if (row[endorsement_col].find("certified") != -1) and not row[
-                    visible_col
-                ]:
-                    pendientes.append("por publicar")
-                if (row[endorsement_col].find("certified") != -1) and (
-                    row[endorsement_col].find("promoted") == -1
+                    not any(
+                        [pd.notna(row[col]) and row[col] != "" for col in df.columns]
+                    )
+                    or "promoted" not in row[endorsement_col]
+                    and "certified" not in row[endorsement_col]
                 ):
                     pendientes.append("por promocionar")
 
-                # Omitir reportes sin pendientes
+                # 2. Si el estado es 'promoted' o está en proceso de certificación
+                if (
+                    "promoted" in row[endorsement_col]
+                    and "certified" not in row[endorsement_col]
+                ):
+                    pendientes.append("por certificar")
+
+                # 3. Regla: Si visible es false, siempre debe estar como por publicar
+                if not row[visible_col] and "por publicar" not in pendientes:
+                    pendientes.append("por publicar")
+
+                # Omitir reportes sin pendientes (certificados y publicados)
                 if not pendientes:
                     continue
 
-                # Crear clave combinada para el estado
-                clave_estado = " y ".join(sorted(pendientes))
+                # Crear clave combinada para el estado uniendo todos los estados pendientes
+                clave_estado = " y ".join(sorted(set(pendientes)))
 
                 # Agregar reporte a la combinación correspondiente
                 if clave_estado not in estado_combinaciones:
@@ -485,6 +494,10 @@ async def send_emails(request: Request):
                         "domains": domains_list,
                     }
                 )
+
+            except Exception as e:
+                print(f"Error enviando correo a {data_owner}: {str(e)}")
+                continue
 
             except Exception as e:
                 print(f"Error enviando correo a {data_owner}: {str(e)}")
