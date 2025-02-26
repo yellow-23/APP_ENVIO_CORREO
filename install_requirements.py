@@ -15,7 +15,11 @@ def install_packages():
         'jinja2',
         'python-multipart',
         'starlette',
-        'werkzeug'
+        'werkzeug',
+        'itsdangerous',
+        'psutil',
+        'aiofiles',
+
     ]
     
     print("Installing required packages...")
