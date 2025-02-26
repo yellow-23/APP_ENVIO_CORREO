@@ -1,356 +1,210 @@
 import os
+import re
+import logging
 import pandas as pd
+from datetime import datetime
 from fastapi import FastAPI, Request, UploadFile, File, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.sessions import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
-import re
-import logging
-import uvicorn
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
+# =========================================
+# Configuración de logging
+# =========================================
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
-app.add_middleware(SessionMiddleware, secret_key="your-secret-key")
-
-# Actualizar la ruta de templates
-template_dir = os.path.join(os.path.dirname(__file__), "templates")
-templates = Jinja2Templates(directory=template_dir)
-
-# Carpeta donde se guardarán los archivos subidos
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-# Verificar y crear el directorio 'static'
-static_dir = os.path.join(os.path.dirname(__file__), "static")
-if not os.path.exists(static_dir):
-    os.makedirs(static_dir)
-
-# Montar el directorio estático
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-# Variable global para almacenar el DataFrame temporalmente
-current_df = None
-
-# Actualizar configuración SMTP con información para Gmail
+# =========================================
+# Configuración SMTP de ejemplo
+# =========================================
 SMTP_CONFIG = {
     "1": {
-        "email": "mmunozp.practica@cmpc.com",  # Cambiar a tu correo Gmail
+        "email": "mmunozp.practica@cmpc.com",
         "password": "hlpi nude axco cwme",
         "account_type": "Cuenta de Pruebas",
         "description": "Use esta cuenta para pruebas iniciales",
     }
 }
 
+# =========================================
+# Función para extraer el dominio de un email
+# =========================================
+def get_email_domain(email: str) -> str:
+    """Extrae el dominio de un correo electrónico."""
+    match = re.search(r"@[\w.]+", email)
+    return match.group() if match else "@unknown"
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    """Página de inicio con el formulario de carga."""
-    messages = request.session.pop("messages", [])
-    return templates.TemplateResponse(
-        "intro.html",  # Cambiado de index.html a intro.html
-        {"request": request, "messages": messages},
-    )
+# =========================================
+# Creación de la aplicación vía Factory
+# =========================================
+def create_app() -> FastAPI:
+    """
+    Crea y configura la aplicación FastAPI para la gestión de usabilidad.
+    """
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="your-secret-key")
 
+    # Directorios de templates y estáticos
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    template_dir = os.path.join(base_dir, "templates")
+    static_dir = os.path.join(base_dir, "static")
+    os.makedirs(static_dir, exist_ok=True)
 
-@app.post("/upload", response_class=HTMLResponse)
-async def upload_file(request: Request, file: UploadFile = File(...)):
-    """Procesa la subida del archivo Excel."""
+    templates = Jinja2Templates(directory=template_dir)
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    # Carpeta de uploads
+    upload_folder = os.path.join(base_dir, "uploads")
+    os.makedirs(upload_folder, exist_ok=True)
+
+    # Variable global para almacenar el DataFrame
+    # (Para un sistema productivo, se recomienda una solución más robusta.)
     global current_df
+    current_df = None
 
-    if not file.filename.endswith(".xlsx"):
-        request.session["messages"] = ["Por favor sube un archivo Excel (.xlsx)"]
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    # ===============================
+    # Rutas
+    # ===============================
 
-    try:
-        # Leer el archivo especificando la hoja "Hoja 1"
-        content = await file.read()
-        current_df = pd.read_excel(content, sheet_name="Hoja 1")
-        current_df.columns = current_df.columns.str.strip()
-
-        # Redirigir a la vista previa
-        return RedirectResponse(url="/preview", status_code=status.HTTP_302_FOUND)
-
-    except Exception as e:
-        request.session["messages"] = [f"Error al procesar el archivo: {str(e)}"]
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-
-
-@app.get("/preview", response_class=HTMLResponse)
-async def preview(request: Request):
-    """Muestra una vista previa del Excel procesado."""
-    global current_df
-
-    if current_df is None:
-        request.session["messages"] = ["No hay archivo cargado para previsualizar"]
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-
-    try:
-        # Preparar los datos para la plantilla
-        reports = []
-        for _, row in current_df.iterrows():
-            report_data = {}
-            for column in current_df.columns:
-                report_data[column.lower().replace(" ", "_")] = row.get(column, "")
-            reports.append(report_data)
-
-        summary = {
-            "total_pending": len(reports),
-            "columns": current_df.columns.tolist(),
-            "reports": reports,  # Agregado para coincidir con el template
-        }
-
+    @app.get("/", response_class=HTMLResponse)
+    async def index(request: Request):
+        """
+        Pantalla de inicio con formulario de carga.
+        Muestra mensajes en sesión (si los hay).
+        """
+        messages = request.session.pop("messages", [])
         return templates.TemplateResponse(
-            "vista_preview.html",  # Cambiado a vista_preview.html
-            {"request": request, "summary": summary},
+            "intro.html",
+            {"request": request, "messages": messages},
         )
 
-    except Exception as e:
-        request.session["messages"] = [f"Error al mostrar la vista previa: {str(e)}"]
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    @app.post("/upload", response_class=HTMLResponse)
+    async def upload_file(request: Request, file: UploadFile = File(...)):
+        """
+        Procesa la subida de un archivo Excel, esperando que la hoja se llame 'Hoja 1'.
+        El DataFrame se almacena en 'current_df'.
+        """
+        global current_df
 
+        if not file.filename.endswith(".xlsx"):
+            request.session["messages"] = ["Por favor sube un archivo Excel (.xlsx)"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
-@app.get("/select_account", response_class=HTMLResponse)
-async def select_account(request: Request):
-    """Página de selección de cuenta."""
-    if current_df is None:
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+        try:
+            content = await file.read()
+            df = pd.read_excel(content, sheet_name="Hoja 1")
+            df.columns = df.columns.str.strip()  # Limpia espacios en nombres de columnas
 
-    messages = request.session.pop("messages", [])
-    return templates.TemplateResponse(
-        "seleccionar_cuenta.html",
-        {"request": request, "messages": messages, "accounts": SMTP_CONFIG},
-    )
+            current_df = df
+            logger.info(f"Archivo Excel cargado correctamente con {len(df)} filas.")
 
+            # Redirige a la vista previa
+            return RedirectResponse(url="/preview", status_code=status.HTTP_302_FOUND)
 
-@app.post("/process_account")
-async def process_account(request: Request):
-    """Procesa la selección de cuenta."""
-    try:
-        form_data = await request.form()
-        account_id = form_data.get("account")
+        except Exception as e:
+            logger.error(f"Error al procesar el archivo: {str(e)}")
+            request.session["messages"] = [f"Error al procesar el archivo: {str(e)}"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
-        if account_id not in SMTP_CONFIG:
-            request.session["messages"] = ["Cuenta inválida seleccionada"]
+    @app.get("/preview", response_class=HTMLResponse)
+    async def preview(request: Request):
+        """
+        Muestra una vista previa de todos los datos cargados en 'current_df'.
+        """
+        global current_df
+
+        if current_df is None:
+            request.session["messages"] = ["No hay archivo cargado para previsualizar"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+
+        try:
+            # Convertir cada fila del DataFrame a un dict
+            reports = []
+            for _, row in current_df.iterrows():
+                row_data = {}
+                for column in current_df.columns:
+                    # Se renombra la columna para la plantilla
+                    row_data[column.lower().replace(" ", "_")] = row.get(column, "")
+                reports.append(row_data)
+
+            summary = {
+                "total_pending": len(reports),
+                "columns": current_df.columns.tolist(),
+                "reports": reports,
+            }
+
+            return templates.TemplateResponse(
+                "vista_preview.html",
+                {"request": request, "summary": summary},
+            )
+
+        except Exception as e:
+            logger.error(f"Error al mostrar la vista previa: {str(e)}")
+            request.session["messages"] = [f"Error al mostrar la vista previa: {str(e)}"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+
+    @app.get("/select_account", response_class=HTMLResponse)
+    async def select_account(request: Request):
+        """
+        Permite seleccionar la cuenta SMTP para enviar correos.
+        """
+        global current_df
+        if current_df is None:
+            logger.info("No hay archivo cargado; redirigiendo a /")
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+
+        messages = request.session.pop("messages", [])
+        return templates.TemplateResponse(
+            "seleccionar_cuenta.html",
+            {"request": request, "messages": messages, "accounts": SMTP_CONFIG},
+        )
+
+    @app.post("/process_account")
+    async def process_account(request: Request):
+        """
+        Procesa la selección de la cuenta SMTP y guarda la opción en la sesión.
+        """
+        try:
+            form_data = await request.form()
+            account_id = form_data.get("account")
+
+            if account_id not in SMTP_CONFIG:
+                request.session["messages"] = ["Cuenta inválida seleccionada"]
+                return RedirectResponse(
+                    url="/select_account", status_code=status.HTTP_302_FOUND
+                )
+
+            request.session["selected_account"] = account_id
+            return RedirectResponse(
+                url="/preview_emails", status_code=status.HTTP_302_FOUND
+            )
+
+        except Exception as e:
+            logger.error(f"Error al procesar la selección de cuenta: {str(e)}")
+            request.session["messages"] = [f"Error al procesar la cuenta: {str(e)}"]
             return RedirectResponse(
                 url="/select_account", status_code=status.HTTP_302_FOUND
             )
 
-        # Guardar la cuenta seleccionada en la sesión
-        request.session["selected_account"] = account_id
-
-        # Redirigir a la vista previa de correos
-        return RedirectResponse(
-            url="/preview_emails", status_code=status.HTTP_302_FOUND
-        )
-
-    except Exception as e:
-        request.session["messages"] = [f"Error al procesar la selección: {str(e)}"]
-        return RedirectResponse(
-            url="/select_account", status_code=status.HTTP_302_FOUND
-        )
-
-
-def generate_email_html(row_data):
-    """Genera el HTML para el correo usando el template de Gmail."""
-    try:
-        # Obtener el email y el área de datos (dominio)
-        email = (
-            row_data.get("data_owner")
-            or row_data.get("responsable_email")
-            or row_data.get("email")
-            or "Usuario"
-        )
-        dominio = (
-            row_data.get("area_datos")
-            or row_data.get("dominio")
-            or "Área no especificada"
-        )
-
-        # Generar fila de tabla con los datos del reporte
-        tabla_filas = ""
-        if "nombre_reporte" in row_data and "workspace" in row_data:
-            tabla_filas = f"""
-                <tr>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{row_data["nombre_reporte"]}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{row_data["workspace"]}</td>
-                </tr>
-            """
-
-        # Debugging: imprimir datos disponibles
-        print("Datos disponibles:", row_data.keys())
-        print(f"Reporte: {row_data.get('nombre_reporte', 'No encontrado')}")
-        print(f"Workspace: {row_data.get('workspace', 'No encontrado')}")
-        print(f"Dominio/Área: {dominio}")
-
-        # Leer el template
-        template_path = os.path.join(template_dir, "gmail_template.html")
-        with open(template_path, "r", encoding="utf-8") as file:
-            template = file.read()
-
-        # Reemplazar los placeholders
-        html_content = template.replace("{{ email }}", email)
-        html_content = template.replace("{{ dominio }}", dominio)
-        html_content = template.replace("{{ tabla_filas|safe }}", tabla_filas)
-
-        return html_content
-
-    except Exception as e:
-        logger.error(f"Error generando HTML: {str(e)}")
-        return f"""
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2>Error generando el template</h2>
-            <p>Se encontró un error al generar el contenido del correo.</p>
-            <p>Error: {str(e)}</p>
-        </div>
+    @app.get("/preview_emails", response_class=HTMLResponse)
+    async def preview_emails(request: Request):
         """
-
-
-@app.get("/preview_emails", response_class=HTMLResponse)
-async def preview_emails(request: Request):
-    """Muestra la vista previa de los correos a enviar."""
-    if current_df is None:
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-
-    # Debug: Mostrar las columnas disponibles y primeras filas
-    print("Columnas disponibles:", current_df.columns.tolist())
-    print("Primera fila del DataFrame:", current_df.iloc[0].to_dict())
-
-    account_id = request.session.get("selected_account")
-    if not account_id:
-        return RedirectResponse(
-            url="/select_account", status_code=status.HTTP_302_FOUND
-        )
-
-    # Verificar la columna de correos
-    email_column = None
-    for possible_column in ["Data Owner", "RESPONSABLE_EMAIL", "Email", "Correo"]:
-        if possible_column in current_df.columns:
-            email_column = possible_column
-            break
-
-    if not email_column:
-        request.session["messages"] = [
-            "No se encontró la columna de correos electrónicos"
-        ]
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-
-    # Preparar los correos para previsualización
-    preview_emails = {}
-    for email in current_df[email_column].dropna().unique():
-        rows = current_df[current_df[email_column] == email]
-        tabla_filas = ""
-
-        # Obtener el área de datos del primer registro
-        first_row = rows.iloc[0]
-        print(f"Datos de fila para {email}:", dict(first_row))  # Debug
-
-        # Usar los nombres exactos de las columnas como aparecen en el Excel
-        area_datos = str(
-            first_row.get(
-                "Area Datos", first_row.get("area datos", "Área no especificada")
-            )
-        )
-
-        for _, row in rows.iterrows():
-            # Intentar diferentes variantes de nombres de columnas
-            nombre_reporte = str(
-                row.get(
-                    "Nombre Reporte",
-                    row.get(
-                        "nombre reporte", row.get("Reporte", row.get("reporte", ""))
-                    ),
-                )
-            )
-
-            workspace = str(
-                row.get("Workspace", row.get("workspace", row.get("WorkSpace", "")))
-            )
-
-            print(
-                f"Fila procesada - Reporte: {nombre_reporte}, Workspace: {workspace}, Área: {area_datos}"
-            )
-
-            if nombre_reporte and workspace:  # Solo agregar si hay datos
-                tabla_filas += f"""
-                    <tr>
-                        <td style="border: 1px solid #ddd; padding: 8px;">{nombre_reporte}</td>
-                        <td style="border: 1px solid #ddd; padding: 8px;">{workspace}</td>
-                    </tr>
-                """
-
-        # Crear el contenido del correo
-        template_path = os.path.join(template_dir, "gmail_template.html")
-        with open(template_path, "r", encoding="utf-8") as file:
-            template = file.read()
-
-        html_content = template.replace("{{ email }}", email)
-        html_content = html_content.replace("{{ dominio }}", area_datos)
-        html_content = html_content.replace("{{ tabla_filas|safe }}", tabla_filas)
-
-        preview_emails[email] = html_content
-
-    print(f"Correos a enviar: {list(preview_emails.keys())}")  # Debug
-
-    return templates.TemplateResponse(
-        "confirmacion_envio.html",
-        {
-            "request": request,
-            "preview_emails": preview_emails,
-            "smtp_config": SMTP_CONFIG[account_id],
-        },
-    )
-
-
-async def send_email(smtp_config, to_emails, subject, html_content):
-    """Envía un correo electrónico usando SMTP de Gmail."""
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = smtp_config["email"]
-        msg["To"] = ", ".join(to_emails)
-        msg["Subject"] = subject
-        msg.attach(MIMEText(html_content, "html"))
-
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(smtp_config["email"], smtp_config["password"])
-        server.sendmail(smtp_config["email"], to_emails, msg.as_string())
-        server.quit()
-        logger.info(f"Correo enviado a: {to_emails}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error en envío de correo: {str(e)}")
-        raise e
-
-
-def get_email_domain(email):
-    """Extrae el dominio de un correo electrónico."""
-    match = re.search("@[\w.]+", email)
-    return match.group() if match else "@unknown"
-
-
-@app.post("/send_emails")
-async def send_emails(request: Request):
-    """Procesa el envío de los correos agrupados por dominio de correo."""
-    try:
+        Muestra una vista previa de los correos que se van a enviar,
+        agrupando por dirección de correo.
+        """
+        global current_df
         if current_df is None:
-            raise Exception("No hay datos cargados")
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
         account_id = request.session.get("selected_account")
         if not account_id:
-            raise Exception("No se ha seleccionado una cuenta de envío")
+            return RedirectResponse(url="/select_account", status_code=status.HTTP_302_FOUND)
 
-        smtp_config = SMTP_CONFIG[account_id]
-
-        # Verificar la columna de correos
+        # Buscar columna que contenga emails (ejemplos)
         email_column = None
         for possible_column in ["Data Owner", "RESPONSABLE_EMAIL", "Email", "Correo"]:
             if possible_column in current_df.columns:
@@ -358,18 +212,119 @@ async def send_emails(request: Request):
                 break
 
         if not email_column:
-            raise Exception("No se encontró la columna de correos electrónicos")
+            request.session["messages"] = [
+                "No se encontró la columna de correos electrónicos"
+            ]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
-        # Verificar columnas necesarias
-        required_columns = ["Data Owner", "Data Steward", "Nombre Reporte", "Workspace"]
-        missing_columns = [
-            col for col in required_columns if col not in current_df.columns
-        ]
-        if missing_columns:
-            raise Exception(
-                f"Faltan las siguientes columnas requeridas en el archivo: {missing_columns}"
+        preview_emails = {}
+        for email in current_df[email_column].dropna().unique():
+            rows = current_df[current_df[email_column] == email]
+
+            # Obtener la "Área" o "Dominio" si existe
+            first_row = rows.iloc[0].to_dict()
+            area_datos = str(
+                first_row.get("Area Datos", first_row.get("area datos", "Área no especificada"))
             )
 
+            # Construir filas de tabla
+            tabla_filas = ""
+            for _, row in rows.iterrows():
+                reporte = str(
+                    row.get("Nombre Reporte", row.get("nombre reporte", row.get("Reporte", "")))
+                )
+                workspace = str(row.get("Workspace", row.get("workspace", "")))
+                if reporte or workspace:
+                    tabla_filas += f"""
+                        <tr>
+                            <td style="border: 1px solid #ddd; padding: 8px;">{reporte}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">{workspace}</td>
+                        </tr>
+                    """
+
+            # Leer la plantilla base
+            template_path = os.path.join(template_dir, "gmail_template.html")
+            with open(template_path, "r", encoding="utf-8") as file:
+                template = file.read()
+
+            # Reemplazar placeholders
+            html_content = template.replace("{{ email }}", email)
+            html_content = html_content.replace("{{ dominio }}", area_datos)
+            html_content = html_content.replace("{{ tabla_filas|safe }}", tabla_filas)
+
+            preview_emails[email] = html_content
+
+        smtp_data = SMTP_CONFIG[account_id]
+        return templates.TemplateResponse(
+            "confirmacion_envio.html",
+            {
+                "request": request,
+                "preview_emails": preview_emails,
+                "smtp_config": smtp_data,
+            },
+        )
+
+    async def send_email(smtp_config: dict, to_emails: list, subject: str, html_content: str):
+        """
+        Envía un correo electrónico usando SMTP (Gmail).
+        """
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = smtp_config["email"]
+            msg["To"] = ", ".join(to_emails)
+            msg["Subject"] = subject
+            msg.attach(MIMEText(html_content, "html"))
+
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()
+                server.login(smtp_config["email"], smtp_config["password"])
+                server.sendmail(smtp_config["email"], to_emails, msg.as_string())
+
+            logger.info(f"Correo enviado a: {to_emails}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error en envío de correo a {to_emails}: {str(e)}")
+            raise e
+
+    @app.post("/send_emails")
+    async def send_emails_route(request: Request):
+        """
+        Envía los correos para cada email encontrado en el DataFrame,
+        agrupando la información y registrando en un historial.
+        """
+        global current_df
+        if current_df is None:
+            request.session["messages"] = ["No hay datos cargados para enviar"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+
+        account_id = request.session.get("selected_account")
+        if not account_id:
+            request.session["messages"] = ["No se ha seleccionado una cuenta de envío"]
+            return RedirectResponse(url="/select_account", status_code=status.HTTP_302_FOUND)
+
+        smtp_config = SMTP_CONFIG[account_id]
+        # Identificar la columna de email
+        email_column = None
+        for possible_column in ["Data Owner", "RESPONSABLE_EMAIL", "Email", "Correo"]:
+            if possible_column in current_df.columns:
+                email_column = possible_column
+                break
+
+        if not email_column:
+            request.session["messages"] = ["No se encontró la columna de correos electrónicos"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+
+        # Verificar columnas requeridas de ejemplo
+        required_columns = ["Data Owner", "Data Steward", "Nombre Reporte", "Workspace"]
+        missing_cols = [col for col in required_columns if col not in current_df.columns]
+        if missing_cols:
+            request.session["messages"] = [
+                f"Faltan columnas requeridas en el archivo: {missing_cols}"
+            ]
+            return RedirectResponse(url="/preview_emails", status_code=status.HTTP_302_FOUND)
+
+        # Historial de envíos
         history = {
             "sent_emails": [],
             "errors": [],
@@ -377,121 +332,93 @@ async def send_emails(request: Request):
             "total_recipients": 0,
         }
 
-        # Obtener todos los correos únicos y sus dominios
+        # Unir Data Owner y Data Steward para sacar lista de correos
         unique_emails = pd.concat(
-            [
-                current_df["Data Owner"].dropna(),
-                current_df["Data Steward"].dropna(),
-            ]
+            [current_df["Data Owner"].dropna(), current_df["Data Steward"].dropna()]
         ).unique()
 
-        # Procesar cada correo
         for email in unique_emails:
             try:
-                print(f"\nProcesando envío para: {email}")  # Debug print
+                # Filtrar las filas de este correo
+                df_filtered = current_df[current_df[email_column] == email]
+                if df_filtered.empty:
+                    continue
 
-                # Filtrar registros para este correo
-                rows = current_df[current_df[email_column] == email]
-                print(f"Registros encontrados para {email}: {len(rows)}")  # Debug print
-
-                # Generar contenido
+                domain = get_email_domain(str(email))
                 tabla_filas = ""
 
-                # Obtener el dominio directamente del correo
-                domain = get_email_domain(email)
-                area_datos = domain  # Usar el dominio en lugar de "área datos"
-
-                for _, row in rows.iterrows():
-                    row_dict = row.to_dict()
-                    # Usar los nombres exactos de las columnas
-                    nombre_reporte = str(row_dict.get("nombre reporte", "")) or str(
-                        row_dict.get("reporte", "")
-                    )
-                    workspace = str(row_dict.get("workspace", ""))
-
+                for _, row in df_filtered.iterrows():
+                    reporte = str(row.get("Nombre Reporte", row.get("Reporte", "")))
+                    workspace = str(row.get("Workspace", ""))
                     tabla_filas += f"""
                         <tr>
-                            <td style="border: 1px solid #ddd; padding: 8px;">{nombre_reporte}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">{reporte}</td>
                             <td style="border: 1px solid #ddd; padding: 8px;">{workspace}</td>
                         </tr>
                     """
 
-                # Crear el contenido del correo
+                # Renderizar template
                 template_path = os.path.join(template_dir, "gmail_template.html")
                 with open(template_path, "r", encoding="utf-8") as file:
-                    template = file.read()
+                    template_html = file.read()
 
-                html_content = template.replace("{{ email }}", email)
-                html_content = html_content.replace("{{ dominio }}", area_datos)
-                html_content = html_content.replace(
-                    "{{ tabla_filas|safe }}", tabla_filas
-                )
+                html_content = template_html.replace("{{ email }}", str(email))
+                html_content = html_content.replace("{{ dominio }}", domain)
+                html_content = html_content.replace("{{ tabla_filas|safe }}", tabla_filas)
 
-                # Intentar envío
-                subject = f"Reporte CMPC - {datetime.now().strftime('%d/%m/%Y')} - {area_datos}"
+                subject = f"Reporte CMPC - {datetime.now().strftime('%d/%m/%Y')} - {domain}"
                 await send_email(smtp_config, [email], subject, html_content)
 
-                # Registrar éxito
                 history["sent_emails"].append(
                     {
                         "recipient": email,
                         "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "total_reports": len(rows),
+                        "total_reports": len(df_filtered),
                         "domains": [domain],
                     }
                 )
 
             except Exception as e:
                 error_msg = f"Error enviando a {email}: {str(e)}"
-                print(f"Error en envío: {error_msg}")  # Debug print
+                logger.error(error_msg)
                 history["errors"].append(error_msg)
 
-        # Actualizar estadísticas
-        history["total_domains"] = len(
-            set(email["domains"][0] for email in history["sent_emails"])
-        )
+        # Estadísticas finales
+        history["total_domains"] = len({dom for item in history["sent_emails"] for dom in item["domains"]})
         history["total_recipients"] = len(history["sent_emails"])
 
-        # Guardar historial en la sesión
         request.session["send_history"] = history
-
         if history["errors"]:
             request.session["messages"] = [
-                "Proceso completado con algunos errores. Revise el historial para más detalles."
+                "Proceso completado con algunos errores. Revise el historial."
             ]
         else:
-            request.session["messages"] = ["Correos enviados correctamente por dominio"]
+            request.session["messages"] = ["Correos enviados exitosamente."]
 
-        return RedirectResponse(
-            url="/envio_realizado", status_code=status.HTTP_302_FOUND
+        return RedirectResponse(url="/envio_realizado", status_code=status.HTTP_302_FOUND)
+
+    @app.get("/envio_realizado", response_class=HTMLResponse)
+    async def envio_realizado(request: Request):
+        """
+        Muestra un resumen del envío de correos en la plantilla correspondiente.
+        """
+        history = request.session.get("send_history")
+        if not history:
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+
+        return templates.TemplateResponse(
+            "envio_realizado.html",
+            {"request": request, "history": history},
         )
 
-    except Exception as e:
-        logger.error(f"Error general en envío de correos: {str(e)}")
-        request.session["messages"] = [f"Error en envío: {str(e)}"]
-        return RedirectResponse(
-            url="/preview_emails", status_code=status.HTTP_302_FOUND
-        )
-
-
-@app.get("/envio_realizado", response_class=HTMLResponse)
-async def envio_realizado(request: Request):
-    """Muestra el resumen del envío de correos."""
-    history = request.session.get("send_history")
-    if not history:
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-
-    return templates.TemplateResponse(
-        "envio_realizado.html", {"request": request, "history": history}
-    )
-
-
-# Crear la aplicación
-def create_app():
     return app
 
 
+# =========================================
+# Ejecución principal
+# =========================================
+app = create_app()
+
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
