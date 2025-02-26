@@ -46,12 +46,12 @@ PROJECTS = {
         "path": os.path.join(BASE_DIR, "Sellos"),
     },
     "usabilidad": {
-        "name": "Usabilidad de Reportes",
-        "module": "Usabilidad.usabilidad:create_app",
-        "port": 8003,
-        "color": "#ff0000",
-        "factory": True,
-        "path": os.path.join(BASE_DIR, "Usabilidad"),
+    "name": "Usabilidad de Reportes",
+    "module": "usabilidad:create_app", 
+    "port": 8003,
+    "color": "#ff0000",
+    "factory": True,
+    "path": os.path.join(BASE_DIR, "usabilidad"),
     },
 }
 
