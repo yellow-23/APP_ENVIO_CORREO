@@ -45,9 +45,9 @@ PROJECTS = {
         "factory": True,
         "path": os.path.join(BASE_DIR, "Sellos"),
     },
-    "usabilidad": {  # Cambiado de "usuabilidad" a "usabilidad"
+    "usabilidad": {
         "name": "Usabilidad de Reportes",
-        "module": "usabilidad:create_app",
+        "module": "Usabilidad.usabilidad:create_app",
         "port": 8003,
         "color": "#ff0000",
         "factory": True,

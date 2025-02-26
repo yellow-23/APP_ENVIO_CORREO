@@ -225,7 +225,9 @@ async def preview_emails(request: Request):
 
     account_id = request.session.get("selected_account")
     if not account_id:
-        return RedirectResponse(url="/select_account", status_code=status.HTTP_302_FOUND)
+        return RedirectResponse(
+            url="/select_account", status_code=status.HTTP_302_FOUND
+        )
 
     # Verificar la columna de correos
     email_column = None
@@ -235,7 +237,9 @@ async def preview_emails(request: Request):
             break
 
     if not email_column:
-        request.session["messages"] = ["No se encontró la columna de correos electrónicos"]
+        request.session["messages"] = [
+            "No se encontró la columna de correos electrónicos"
+        ]
         return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
     # Preparar los correos para previsualización
@@ -243,27 +247,37 @@ async def preview_emails(request: Request):
     for email in current_df[email_column].dropna().unique():
         rows = current_df[current_df[email_column] == email]
         tabla_filas = ""
-        
+
         # Obtener el área de datos del primer registro
         first_row = rows.iloc[0]
         print(f"Datos de fila para {email}:", dict(first_row))  # Debug
-        
+
         # Usar los nombres exactos de las columnas como aparecen en el Excel
-        area_datos = str(first_row.get("Area Datos", first_row.get("area datos", "Área no especificada")))
-        
+        area_datos = str(
+            first_row.get(
+                "Area Datos", first_row.get("area datos", "Área no especificada")
+            )
+        )
+
         for _, row in rows.iterrows():
             # Intentar diferentes variantes de nombres de columnas
-            nombre_reporte = str(row.get("Nombre Reporte", 
-                               row.get("nombre reporte",
-                               row.get("Reporte",
-                               row.get("reporte", "")))))
-            
-            workspace = str(row.get("Workspace",
-                          row.get("workspace",
-                          row.get("WorkSpace", ""))))
-            
-            print(f"Fila procesada - Reporte: {nombre_reporte}, Workspace: {workspace}, Área: {area_datos}")
-            
+            nombre_reporte = str(
+                row.get(
+                    "Nombre Reporte",
+                    row.get(
+                        "nombre reporte", row.get("Reporte", row.get("reporte", ""))
+                    ),
+                )
+            )
+
+            workspace = str(
+                row.get("Workspace", row.get("workspace", row.get("WorkSpace", "")))
+            )
+
+            print(
+                f"Fila procesada - Reporte: {nombre_reporte}, Workspace: {workspace}, Área: {area_datos}"
+            )
+
             if nombre_reporte and workspace:  # Solo agregar si hay datos
                 tabla_filas += f"""
                     <tr>
@@ -295,36 +309,21 @@ async def preview_emails(request: Request):
     )
 
 
-async def send_email(smtp_config, to_email, subject, html_content):
+async def send_email(smtp_config, to_emails, subject, html_content):
     """Envía un correo electrónico usando SMTP de Gmail."""
     try:
         msg = MIMEMultipart()
         msg["From"] = smtp_config["email"]
-        msg["To"] = to_email
+        msg["To"] = ", ".join(to_emails)
         msg["Subject"] = subject
         msg.attach(MIMEText(html_content, "html"))
 
-        # Configuración específica para Gmail
         server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.set_debuglevel(1)
-
-        # Establecer conexión segura
-        server.ehlo()
         server.starttls()
-        server.ehlo()
-
-        print(f"Intentando login con Gmail: {smtp_config['email']}")
-        try:
-            server.login(smtp_config["email"], smtp_config["password"])
-        except smtplib.SMTPAuthenticationError as auth_error:
-            logger.error(f"Error de autenticación Gmail: {str(auth_error)}")
-            raise Exception(
-                "Error de autenticación con Gmail. Verifica las credenciales."
-            )
-
-        # Enviar correo
-        server.send_message(msg)
+        server.login(smtp_config["email"], smtp_config["password"])
+        server.sendmail(smtp_config["email"], to_emails, msg.as_string())
         server.quit()
+        logger.info(f"Correo enviado a: {to_emails}")
         return True
 
     except Exception as e:
@@ -340,10 +339,16 @@ def get_email_domain(email):
 
 @app.post("/send_emails")
 async def send_emails(request: Request):
-    """Procesa el envío de los correos."""
+    """Procesa el envío de los correos agrupados por dominio de correo."""
     try:
         if current_df is None:
             raise Exception("No hay datos cargados")
+
+        account_id = request.session.get("selected_account")
+        if not account_id:
+            raise Exception("No se ha seleccionado una cuenta de envío")
+
+        smtp_config = SMTP_CONFIG[account_id]
 
         # Verificar la columna de correos
         email_column = None
@@ -355,40 +360,30 @@ async def send_emails(request: Request):
         if not email_column:
             raise Exception("No se encontró la columna de correos electrónicos")
 
-        print(f"Usando columna de correos: {email_column}")
+        # Verificar columnas necesarias
+        required_columns = ["Data Owner", "Data Steward", "Nombre Reporte", "Workspace"]
+        missing_columns = [
+            col for col in required_columns if col not in current_df.columns
+        ]
+        if missing_columns:
+            raise Exception(
+                f"Faltan las siguientes columnas requeridas en el archivo: {missing_columns}"
+            )
 
-        # Validar y obtener correos únicos
-        unique_emails = []
-        invalid_emails = []
-
-        for email in current_df[email_column].dropna().unique():
-            email = str(email).strip()
-            if "@" in email and "." in email:  # Validación básica
-                unique_emails.append(email)
-            else:
-                invalid_emails.append(email)
-
-        if invalid_emails:
-            print(f"Correos inválidos encontrados: {invalid_emails}")
-
-        if not unique_emails:
-            raise Exception("No se encontraron correos válidos para enviar")
-
-        account_id = request.session.get("selected_account")
-        if not account_id:
-            raise Exception("No se ha seleccionado una cuenta de envío")
-
-        smtp_config = SMTP_CONFIG[account_id]
         history = {
-            "sender_email": smtp_config["email"],
-            "account_type": smtp_config["account_type"],
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "sent_emails": [],
             "errors": [],
-            "total_recipients": 0,
-            "total_reports": 0,
             "total_domains": 0,
+            "total_recipients": 0,
         }
+
+        # Obtener todos los correos únicos y sus dominios
+        unique_emails = pd.concat(
+            [
+                current_df["Data Owner"].dropna(),
+                current_df["Data Steward"].dropna(),
+            ]
+        ).unique()
 
         # Procesar cada correo
         for email in unique_emails:
@@ -402,27 +397,24 @@ async def send_emails(request: Request):
                 # Generar contenido
                 tabla_filas = ""
 
-                # Obtener el área de datos directamente del DataFrame
-                area_datos = str(rows.iloc[0].get("Area Datos", rows.iloc[0].get("area datos", "Área no especificada")))
+                # Obtener el dominio directamente del correo
+                domain = get_email_domain(email)
+                area_datos = domain  # Usar el dominio en lugar de "área datos"
 
                 for _, row in rows.iterrows():
-                    # Acceder directamente a las columnas del DataFrame
-                    nombre_reporte = str(row.get("Nombre Reporte", 
-                                   row.get("nombre reporte",
-                                   row.get("Reporte",
-                                   row.get("reporte", "")))))
-                
-                    workspace = str(row.get("Workspace",
-                              row.get("workspace",
-                              row.get("WorkSpace", ""))))
-                    
-                    if nombre_reporte and workspace:
-                        tabla_filas += f"""
-                            <tr>
-                                <td style="border: 1px solid #ddd; padding: 8px;">{nombre_reporte}</td>
-                                <td style="border: 1px solid #ddd; padding: 8px;">{workspace}</td>
-                            </tr>
-                        """
+                    row_dict = row.to_dict()
+                    # Usar los nombres exactos de las columnas
+                    nombre_reporte = str(row_dict.get("nombre reporte", "")) or str(
+                        row_dict.get("reporte", "")
+                    )
+                    workspace = str(row_dict.get("workspace", ""))
+
+                    tabla_filas += f"""
+                        <tr>
+                            <td style="border: 1px solid #ddd; padding: 8px;">{nombre_reporte}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">{workspace}</td>
+                        </tr>
+                    """
 
                 # Crear el contenido del correo
                 template_path = os.path.join(template_dir, "gmail_template.html")
@@ -435,12 +427,11 @@ async def send_emails(request: Request):
                     "{{ tabla_filas|safe }}", tabla_filas
                 )
 
-                # Intentar envío con el área en el asunto
+                # Intentar envío
                 subject = f"Reporte CMPC - {datetime.now().strftime('%d/%m/%Y')} - {area_datos}"
-                await send_email(smtp_config, email, subject, html_content)
+                await send_email(smtp_config, [email], subject, html_content)
 
                 # Registrar éxito
-                domain = get_email_domain(email)
                 history["sent_emails"].append(
                     {
                         "recipient": email,
@@ -456,30 +447,28 @@ async def send_emails(request: Request):
                 history["errors"].append(error_msg)
 
         # Actualizar estadísticas
-        history["total_recipients"] = len(history["sent_emails"])
-        history["total_reports"] = sum(
-            email["total_reports"] for email in history["sent_emails"]
-        )
         history["total_domains"] = len(
-            set(
-                domain
-                for email in history["sent_emails"]
-                for domain in email["domains"]
-            )
+            set(email["domains"][0] for email in history["sent_emails"])
         )
+        history["total_recipients"] = len(history["sent_emails"])
 
-        # Guardar historial
+        # Guardar historial en la sesión
         request.session["send_history"] = history
 
-        print("Proceso de envío completado")  # Debug print
+        if history["errors"]:
+            request.session["messages"] = [
+                "Proceso completado con algunos errores. Revise el historial para más detalles."
+            ]
+        else:
+            request.session["messages"] = ["Correos enviados correctamente por dominio"]
+
         return RedirectResponse(
             url="/envio_realizado", status_code=status.HTTP_302_FOUND
         )
 
     except Exception as e:
-        error_msg = f"Error general: {str(e)}"
-        print(f"Error general: {error_msg}")  # Debug print
-        request.session["messages"] = [error_msg]
+        logger.error(f"Error general en envío de correos: {str(e)}")
+        request.session["messages"] = [f"Error en envío: {str(e)}"]
         return RedirectResponse(
             url="/preview_emails", status_code=status.HTTP_302_FOUND
         )
