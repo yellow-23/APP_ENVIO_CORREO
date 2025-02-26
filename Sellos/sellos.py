@@ -130,7 +130,7 @@ def create_app():
                     
                     rows.append(f"""
                     <tr>
-                        <td style="width: 25%; padding: 8px;">{format_empty_value(reporte.get('WorkSpace', ''))}</td>
+                        <td style="width: 25%; padding: 8px;">{format_empty_value(reporte.get('Workspace.Title', ''))}</td>
                         <td style="width: 35%; padding: 8px;">{format_empty_value(clean_title(reporte.get('Titulo', '')))}</td>
                         <td style="width: 20%; padding: 8px;">{format_empty_value(reporte.get('Responsable', ''))}</td>
                         <td style="width: 20%; padding: 8px;">{formatear_sellos(reporte)}</td>
@@ -198,7 +198,7 @@ def create_app():
             
             # Validación básica de columnas
             expected_columns = [
-                'Dominio', 'WorkSpace', 'SelloTécnico', 'SelloNegocio',
+                'Dominio', 'Workspace.Title', 'SelloTécnico', 'SelloNegocio',
                 'SelloSeguridad', 'Titulo', 'DataOwner_Lgobierno', 
                 'DataStewards', 'Responsable'
             ]
@@ -310,6 +310,17 @@ def create_app():
             try:
                 df = pd.read_excel(filepath)
                 print(f"DEBUG: DataFrame cargado con {len(df)} filas")  # 🚀 Verificar carga de datos
+                
+                # Verificar columnas requeridas
+                required_columns = ['Dominio', 'Workspace.Title', 'SelloNegocio', 'Titulo', 'DataOwner_Lgobierno', 'Responsable']
+                missing_columns = [col for col in required_columns if col not in df.columns]
+                if missing_columns:
+                    error_msg = f"Error: El archivo no contiene las columnas necesarias: {', '.join(missing_columns)}"
+                    flash.add_message(error_msg, 'error')
+                    print(f"DEBUG: {error_msg}")
+                    os.remove(filepath)  # Limpieza
+                    return RedirectResponse(url="/", status_code=303)
+                
             except ImportError as e:
                 error_msg = str(e)
                 if "openpyxl" in error_msg:
@@ -320,20 +331,25 @@ def create_app():
                 else:
                     raise  # Si es otro tipo de error de importación, lo volvemos a lanzar
             
-            # Guardar en sesión
-            request.session["current_file"] = filepath
-            request.session["current_step"] = "review"
-            request.session["summary"] = {
-                'total_reports': len(df),
-                'pending_review': len(df[~df['SelloNegocio']]),
-                'with_business_seal': len(df[df['SelloNegocio']]),
-                'domains': df['Dominio'].nunique(),
-                'data_owners': df['DataOwner_Lgobierno'].dropna().nunique()
-            }
+            # Guardar en sesión - Aseguramos que estos valores persisten
+            request.session.update({
+                "current_file": filepath,
+                "current_step": "review",
+                "summary": {
+                    'total_reports': len(df),
+                    'pending_review': len(df[~df['SelloNegocio']]) if 'SelloNegocio' in df.columns else 0,
+                    'with_business_seal': len(df[df['SelloNegocio']]) if 'SelloNegocio' in df.columns else 0,
+                    'domains': df['Dominio'].nunique() if 'Dominio' in df.columns else 0,
+                    'data_owners': df['DataOwner_Lgobierno'].dropna().nunique() if 'DataOwner_Lgobierno' in df.columns else 0
+                }
+            })
 
-            print(f"DEBUG: Resumen de datos: {request.session['summary']}")  # 🚀 Depurar valores de sesión
-
-            return RedirectResponse(url="/review", status_code=303)
+            print(f"DEBUG: Sesión actualizada con ruta del archivo: {request.session['current_file']}")
+            print(f"DEBUG: Redirigiendo a /review")
+            
+            # Forzar el estado de la sesión
+            response = RedirectResponse(url="/review", status_code=303)
+            return response
                 
         except Exception as e:
             flash.add_message(f'Error al procesar el archivo: {str(e)}', 'error')
@@ -342,39 +358,56 @@ def create_app():
 
     @app.get("/review")
     async def review_data(request: Request):
-        print("DEBUG: Revisando request.session ->", dict(request.session))  # 🔥 Agregar este print
+        print("DEBUG: Entrando a review_data")
+        print(f"DEBUG: Sesión contiene: {list(request.session.keys())}")
         
         if "current_file" not in request.session:
             flash.add_message('No hay archivo para procesar', 'error')
+            print("DEBUG: No hay archivo en la sesión")
             return RedirectResponse(url="/", status_code=303)
         
+        filepath = request.session["current_file"]
+        print(f"DEBUG: Procesando archivo: {filepath}")
+        
         try:
-            df = pd.read_excel(request.session["current_file"])
+            # Verificar que el archivo existe
+            if not os.path.exists(filepath):
+                flash.add_message('El archivo ya no existe', 'error')
+                print(f"DEBUG: El archivo no existe en la ruta: {filepath}")
+                return RedirectResponse(url="/", status_code=303)
+                
+            df = pd.read_excel(filepath)
+            print(f"DEBUG: DataFrame cargado en review con {len(df)} filas")
+            
             # Ordenar el DataFrame por Dominio y Título
             df_pending = df[~df['SelloNegocio']].sort_values(['Dominio', 'Titulo'])
             
             reports = []
             for _, row in df_pending.iterrows():
                 sellos = []
-                if row['SelloTécnico']: sellos.append('Tecnología')
-                if row['SelloSeguridad']: sellos.append('Seguridad')
+                if 'SelloTécnico' in df.columns and row.get('SelloTécnico'): 
+                    sellos.append('Tecnología')
+                if 'SelloSeguridad' in df.columns and row.get('SelloSeguridad'): 
+                    sellos.append('Seguridad')
                 
                 reports.append({
                     'dominio': format_empty_value(row['Dominio']),
                     'titulo': clean_title(row['Titulo']),
-                    'workspace': format_empty_value(row['WorkSpace']),
+                    'workspace': format_empty_value(row['Workspace.Title']),
                     'responsable': format_empty_value(row['Responsable']),
-                    'data_owner': format_empty_value(row['DataOwner_Lgobierno']),  # Aseguramos que esté incluido
+                    'data_owner': format_empty_value(row['DataOwner_Lgobierno']),
                     'sellos': ' ; '.join(sellos) if sellos else 'Sin sellos'
                 })
             
             summary = {
-                'filename': os.path.basename(request.session["current_file"]),
+                'filename': os.path.basename(filepath),
                 'total_pending': len(df_pending),
                 'reports': reports
             }
             
             request.session['summary'] = summary
+            print(f"DEBUG: Renderizando review.html con {len(reports)} reportes")
+            
             return templates.TemplateResponse(
                 "review.html",
                 {
@@ -385,6 +418,7 @@ def create_app():
             
         except Exception as e:
             flash.add_message(f'Error al procesar archivo: {str(e)}', 'error')
+            print(f"DEBUG: Error en review_data - {str(e)}")
             return RedirectResponse(url="/", status_code=303)
 
     @app.get("/confirm_send")
@@ -462,7 +496,7 @@ def create_app():
                     preview_data['recipients'][owner].append({
                         'dominio': format_empty_value(row['Dominio']),
                         'titulo': clean_title(row['Titulo']),
-                        'workspace': format_empty_value(row['WorkSpace']),
+                        'workspace': format_empty_value(row['Workspace.Title']),
                         'responsable': format_empty_value(row['Responsable']),
                         'sellos': formatear_sellos(row)
                     })
@@ -552,7 +586,7 @@ def create_app():
 
     return app
 
-# Create the app instance directly
+# Create the app instance directly - Fix this part
 app = create_app()
 
 if __name__ == "__main__":
@@ -568,7 +602,7 @@ if __name__ == "__main__":
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     uvicorn.run(
-        "Sellos.sellos:app",  # Use full module path
+        "sellos:app",  # Fixed module path for local execution
         host="0.0.0.0",
         port=8000,
         reload=True

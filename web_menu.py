@@ -39,7 +39,7 @@ PROJECTS = {
     },
     "sellos": {
         "name": "Sellos de Reportes",
-        "module": "sellos:create_app",
+        "module": "Sellos.sellos:create_app",  # Fixed module path
         "port": 8002,
         "color": "#28a745",
         "factory": True,
