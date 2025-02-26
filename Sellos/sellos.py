@@ -8,14 +8,32 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+import sys
+import importlib
 from werkzeug.utils import secure_filename
+
+# Verificar dependencias críticas
+required_packages = ['openpyxl']
+missing_packages = []
+
+for package in required_packages:
+    try:
+        importlib.import_module(package)
+    except ImportError:
+        missing_packages.append(package)
+
+if missing_packages:
+    print("ERROR: Faltan dependencias requeridas. Por favor, instale los siguientes paquetes:")
+    for package in missing_packages:
+        print(f"  pip install {package}")
+    print("\nEl programa no puede continuar sin estas dependencias.")
 
 # Configuración simplificada
 class Settings:
     SECRET_KEY: str = "tu_clave_secreta_aqui"
     UPLOAD_FOLDER: str = "uploads"
-    TEMPLATES_DIR: str = "templates"
-    STATIC_DIR: str = "static"
+    TEMPLATES_DIR: str = os.path.join(os.path.dirname(__file__), "templates") 
+    STATIC_DIR: str = os.path.join(os.path.dirname(__file__), "static")  
 
 settings = Settings()
 
@@ -172,8 +190,11 @@ def create_app():
         try:
             if not filepath or not os.path.exists(filepath):
                 return "Error: Archivo no encontrado", []
-                
-            df = pd.read_excel(filepath, engine='openpyxl')
+            
+            try:
+                df = pd.read_excel(filepath, engine='openpyxl')
+            except ImportError:
+                return "Error: Falta la biblioteca openpyxl. Instale con 'pip install openpyxl'", []
             
             # Validación básica de columnas
             expected_columns = [
@@ -259,9 +280,12 @@ def create_app():
     @app.post("/upload")
     async def upload_file(request: Request, file: UploadFile = File(...)):
         try:
+            print(f"DEBUG: Recibido archivo {file.filename}")  # 🚀 Verificar nombre del archivo
+
             # Verificar extensión
             if not file.filename.endswith('.xlsx'):
                 flash.add_message('Formato de archivo no válido', 'error')
+                print("DEBUG: Formato no válido")  # 🚀 Verificar si la validación está fallando
                 return RedirectResponse(url="/", status_code=303)
 
             # Crear directorio si no existe
@@ -270,13 +294,31 @@ def create_app():
             # Guardar archivo
             filename = secure_filename(file.filename)
             filepath = os.path.join(settings.UPLOAD_FOLDER, filename)
+            print(f"DEBUG: Guardando archivo en {filepath}")  # 🚀 Verificar ruta de guardado
             
             contents = await file.read()
             with open(filepath, 'wb') as f:
                 f.write(contents)
 
+            # Verificar si el archivo se guardó correctamente
+            if not os.path.exists(filepath):
+                print("DEBUG: Error al guardar el archivo")  # 🚀 Verificar si el guardado falló
+                flash.add_message('Error al guardar el archivo', 'error')
+                return RedirectResponse(url="/", status_code=303)
+
             # Procesar Excel
-            df = pd.read_excel(filepath)
+            try:
+                df = pd.read_excel(filepath)
+                print(f"DEBUG: DataFrame cargado con {len(df)} filas")  # 🚀 Verificar carga de datos
+            except ImportError as e:
+                error_msg = str(e)
+                if "openpyxl" in error_msg:
+                    flash.add_message('Error: Falta la biblioteca openpyxl. Instale con "pip install openpyxl"', 'error')
+                    print("DEBUG: Error - Falta biblioteca openpyxl")
+                    os.remove(filepath)  # Limpieza
+                    return RedirectResponse(url="/", status_code=303)
+                else:
+                    raise  # Si es otro tipo de error de importación, lo volvemos a lanzar
             
             # Guardar en sesión
             request.session["current_file"] = filepath
@@ -289,14 +331,19 @@ def create_app():
                 'data_owners': df['DataOwner_Lgobierno'].dropna().nunique()
             }
 
+            print(f"DEBUG: Resumen de datos: {request.session['summary']}")  # 🚀 Depurar valores de sesión
+
             return RedirectResponse(url="/review", status_code=303)
                 
         except Exception as e:
             flash.add_message(f'Error al procesar el archivo: {str(e)}', 'error')
+            print(f"DEBUG: Error - {str(e)}")  # 🚀 Verificar si hay errores en la carga del archivo
             return RedirectResponse(url="/", status_code=303)
 
     @app.get("/review")
     async def review_data(request: Request):
+        print("DEBUG: Revisando request.session ->", dict(request.session))  # 🔥 Agregar este print
+        
         if "current_file" not in request.session:
             flash.add_message('No hay archivo para procesar', 'error')
             return RedirectResponse(url="/", status_code=303)
@@ -509,6 +556,10 @@ def create_app():
 app = create_app()
 
 if __name__ == "__main__":
+    # Verificar si faltan paquetes antes de intentar ejecutar
+    if missing_packages:
+        sys.exit(1)
+        
     import uvicorn
     import os
     import sys
