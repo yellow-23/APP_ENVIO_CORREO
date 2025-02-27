@@ -198,10 +198,12 @@ def create_app() -> FastAPI:
         """
         global current_df
         if current_df is None:
+            request.session["messages"] = ["No hay datos cargados para previsualizar"]
             return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
         account_id = request.session.get("selected_account")
         if not account_id:
+            request.session["messages"] = ["No se ha seleccionado una cuenta de envío"]
             return RedirectResponse(url="/select_account", status_code=status.HTTP_302_FOUND)
 
         # Buscar columna que contenga emails (ejemplos)
@@ -217,16 +219,24 @@ def create_app() -> FastAPI:
             ]
             return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
-        preview_emails = {}
-        for email in current_df[email_column].dropna().unique():
-            rows = current_df[current_df[email_column] == email]
+        # Verificar la columna de Area datos
+        if "Area datos" not in current_df.columns:
+            request.session["messages"] = [
+                "No se encontró la columna 'Area datos' requerida"
+            ]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
+        preview_data = []  # Lista de diccionarios para pasar a la plantilla
+
+        # Agrupar los datos por área de datos y email 
+        current_df["Area datos"] = current_df["Area datos"].astype(str).str.strip()
+        grouped = current_df.groupby(["Area datos", email_column], dropna=True)
+        
+        for (area_datos, email), rows in grouped:
             # Obtener la "Área" o "Dominio" si existe
-            first_row = rows.iloc[0].to_dict()
-            area_datos = str(
-                first_row.get("Area Datos", first_row.get("area datos", "Área no especificada"))
-            )
-
+            area_datos = area_datos.strip() if isinstance(area_datos, str) else "Área no especificada"
+            logger.info(f"Área de datos asignada para {email}: {area_datos}")
+            
             # Construir filas de tabla
             tabla_filas = ""
             for _, row in rows.iterrows():
@@ -247,20 +257,35 @@ def create_app() -> FastAPI:
             with open(template_path, "r", encoding="utf-8") as file:
                 template = file.read()
 
-            # Reemplazar placeholders
-            html_content = template.replace("{{ email }}", email)
-            html_content = html_content.replace("{{ dominio }}", area_datos)
-            html_content = html_content.replace("{{ tabla_filas|safe }}", tabla_filas)
+            # Crear el HTML renderizado para este correo
+            contenido_html = template.replace("{{ tabla_filas|safe }}", tabla_filas)
+            contenido_html = contenido_html.replace("{{ email }}", str(email))
+            contenido_html = contenido_html.replace("{{ area_datos }}", area_datos)
 
-            preview_emails[email] = html_content
-
+            # Agregar a la lista de previsualizaciones
+            preview_data.append({
+                "email": email,
+                "area_datos": area_datos,
+                "tabla_filas": tabla_filas,
+                "contenido_html": contenido_html,
+                "num_reportes": len(rows)
+            })
+                    
         smtp_data = SMTP_CONFIG[account_id]
+        
+        # Si no hay datos para previsualizar
+        if not preview_data:
+            request.session["messages"] = ["No se encontraron datos válidos para enviar correos"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+        
+        # Mostrar la vista previa de los correos en lugar de redireccionar
         return templates.TemplateResponse(
             "confirmacion_envio.html",
             {
                 "request": request,
-                "preview_emails": preview_emails,
+                "preview_emails": preview_data,
                 "smtp_config": smtp_data,
+                "total_emails": len(preview_data)
             },
         )
 
@@ -287,7 +312,8 @@ def create_app() -> FastAPI:
             logger.error(f"Error en envío de correo a {to_emails}: {str(e)}")
             raise e
 
-    @app.post("/send_emails")
+    # Corregir el decorador para usar get y post por separado
+    @app.post("/send_emails")  # Solo permitir POST para enviar correos
     async def send_emails_route(request: Request):
         """
         Envía los correos para cada email encontrado en el DataFrame,
@@ -304,25 +330,17 @@ def create_app() -> FastAPI:
             return RedirectResponse(url="/select_account", status_code=status.HTTP_302_FOUND)
 
         smtp_config = SMTP_CONFIG[account_id]
-        # Identificar la columna de email
+        
+        # Identificar la columna de email (simplificado para evitar redirecciones)
         email_column = None
         for possible_column in ["Data Owner", "RESPONSABLE_EMAIL", "Email", "Correo"]:
             if possible_column in current_df.columns:
                 email_column = possible_column
                 break
-
+        
         if not email_column:
             request.session["messages"] = ["No se encontró la columna de correos electrónicos"]
             return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-
-        # Verificar columnas requeridas de ejemplo
-        required_columns = ["Data Owner", "Data Steward", "Nombre Reporte", "Workspace"]
-        missing_cols = [col for col in required_columns if col not in current_df.columns]
-        if missing_cols:
-            request.session["messages"] = [
-                f"Faltan columnas requeridas en el archivo: {missing_cols}"
-            ]
-            return RedirectResponse(url="/preview_emails", status_code=status.HTTP_302_FOUND)
 
         # Historial de envíos
         history = {
@@ -333,9 +351,17 @@ def create_app() -> FastAPI:
         }
 
         # Unir Data Owner y Data Steward para sacar lista de correos
-        unique_emails = pd.concat(
-            [current_df["Data Owner"].dropna(), current_df["Data Steward"].dropna()]
-        ).unique()
+        try:
+            if "Data Owner" in current_df.columns and "Data Steward" in current_df.columns:
+                unique_emails = pd.concat(
+                    [current_df["Data Owner"].dropna(), current_df["Data Steward"].dropna()]
+                ).unique()
+            else:
+                unique_emails = current_df[email_column].dropna().unique()
+        except Exception as e:
+            logger.error(f"Error al obtener lista de correos: {str(e)}")
+            request.session["messages"] = [f"Error al procesar los correos: {str(e)}"]
+            return RedirectResponse(url="/preview_emails", status_code=status.HTTP_302_FOUND)
 
         for email in unique_emails:
             try:

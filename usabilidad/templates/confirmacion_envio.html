@@ -94,16 +94,15 @@
 
           {% if preview_emails|length == 0 %}
           <div class="alert alert-warning">No hay correos para mostrar</div>
-          {% endif %} {% for responsable, email_html in preview_emails.items()
-          %}
-          <div class="email-preview">
-            <div class="email-header">
-              <h5 class="mb-0">Para: {{ responsable }}</h5>
+          {% endif %} 
+          
+          {% for preview in preview_emails %}
+            <h3>Correo a: {{ preview.email }}</h3>
+            <p>Área de datos: {{ preview.area_datos }}</p>
+            <div>
+                {{ preview.contenido_html | safe }}
             </div>
-            <div class="email-content">
-              <div class="p-3">{{ email_html|safe }}</div>
-            </div>
-          </div>
+            <hr>
           {% endfor %}
 
           <div class="d-flex justify-content-between mt-4">
