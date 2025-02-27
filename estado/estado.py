@@ -50,24 +50,29 @@ def find_column(df: pd.DataFrame, possible_names: list) -> str:
 def process_email_data(df: pd.DataFrame) -> dict:
     """
     Procesa el DataFrame para generar datos agrupados por Data Owner y Dominio.
-    Crea columnas dinámicas basadas en los estados de los reportes.
+    Crea columnas dinámicas basadas en los estados de los reportes según:
+      - Publicado => "Promocionado"
+      - 3 Sellos (Seguridad, Negocio, Tecnología) => "Certificado"
+      - Si no está publicado => "por publicar"
+      - Si está publicado pero no tiene los 3 sellos => "por certificar"
     """
     # Encuentra las columnas necesarias
     data_owner_col = find_column(df, ["Data Owner", "Owner"])
     dominio_col = find_column(df, ["Dominio"])
-    endorsement_col = find_column(df, ["Endorsement"])
     visible_col = find_column(df, ["Visible"])
     titulo_col = find_column(df, ["Titulo", "Título"])
+    sello_col = find_column(df, ["Sello", "Sellos"])  # Ajusta según tu Excel
 
-    if not all([data_owner_col, dominio_col, endorsement_col, visible_col, titulo_col]):
+    if not all([data_owner_col, dominio_col, visible_col, titulo_col, sello_col]):
         print(f"Columnas disponibles: {df.columns.tolist()}")
         raise ValueError("Faltan columnas necesarias para procesar los datos")
 
-    # Conversión / normalización de datos
-    df[endorsement_col] = df[endorsement_col].astype(str).str.lower()
+    # Normalizar la columna "Visible"
     df[visible_col] = df[visible_col].astype(str).str.lower().map({"true": True, "false": False})
 
+    # Diccionario para el preview final
     preview_emails = {}
+
     # Agrupar por Data Owner y Dominio
     for data_owner in df[data_owner_col].unique():
         if pd.isna(data_owner):
@@ -85,27 +90,35 @@ def process_email_data(df: pd.DataFrame) -> dict:
                 titulo = row[titulo_col]
                 pendientes = []
 
-                # Regla 1: Vacío o sin "promoted"/"certified"
-                if (
-                    not any(pd.notna(row[col]) and row[col] != "" for col in df.columns)
-                    or ("promoted" not in row[endorsement_col]
-                        and "certified" not in row[endorsement_col])
-                ):
-                    pendientes.append("por promocionar")
+                # 1) Está publicado => lo consideramos "promocionado"
+                #    Si no está publicado => "por publicar"
+                is_published = row[visible_col]  # True/False
 
-                # Regla 2: Promovido pero no certificado
-                if "promoted" in row[endorsement_col] and "certified" not in row[endorsement_col]:
-                    pendientes.append("por certificar")
+                # 2) Verificamos si tiene los 3 sellos
+                #    Suponiendo que la columna Sello contenga algo como:
+                #    "Seguridad, Negocio, Tecnología" o parcialmente
+                if pd.notna(row[sello_col]):
+                    sellos_lower = [s.strip().lower() for s in str(row[sello_col]).split(",")]
+                    has_3_sellos = all(sello in sellos_lower for sello in ["seguridad", "negocio", "tecnología"])
+                else:
+                    has_3_sellos = False
 
-                # Regla 3: Si visible es False, debe figurar "por publicar"
-                if not row[visible_col] and "por publicar" not in pendientes:
+                # Lógica de pendientes:
+                # Si NO está publicado => "por publicar"
+                if not is_published:
                     pendientes.append("por publicar")
+                else:
+                    # Está publicado => se asume "promocionado"
+                    # Ahora, si no tiene los 3 sellos => "por certificar"
+                    if not has_3_sellos:
+                        pendientes.append("por certificar")
+                    # Si tiene los 3 sellos => ya está certificado, entonces sin pendientes
 
-                # Omitir reportes que no tengan pendientes
+                # Omitimos los reportes que no tengan pendientes
                 if not pendientes:
                     continue
 
-                # Crear una clave tipo "por promocionar y por publicar"
+                # Crear una clave como "por publicar" o "por certificar", etc.
                 clave_estado = " y ".join(sorted(set(pendientes)))
 
                 if clave_estado not in estado_combinaciones:
@@ -138,6 +151,7 @@ def process_email_data(df: pd.DataFrame) -> dict:
             preview_emails[data_owner] = owner_data
 
     return preview_emails
+
 
 
 # ===============================================
