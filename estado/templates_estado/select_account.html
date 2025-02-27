@@ -40,43 +40,79 @@
               <form method="post" action="/process_account">
                 <div class="mb-4">
                   <h5>Seleccionar cuenta para enviar correos:</h5>
+
+                  <!-- Opción 1: "Cuenta de Pruebas" -->
                   <div class="form-check mb-3 border p-3 rounded">
                     <input
                       class="form-check-input"
                       type="radio"
-                      name="account"
+                      name="account_selection"
                       value="1"
-                      id="email1"
+                      id="account1"
                       required
                     />
-                    <label class="form-check-label" for="email1">
+                    <label class="form-check-label" for="account1">
                       <strong>Cuenta de Pruebas</strong><br />
                       Email: cflores.practica@cmpc.com<br />
                       <small class="text-muted"
                         >Use esta cuenta para pruebas iniciales</small
                       >
                     </label>
+                    <!-- Inputs ocultos con las credenciales de la cuenta -->
+                    <input
+                      type="hidden"
+                      name="account_email_1"
+                      value="cflores.practica@cmpc.com"
+                    />
+                    <input
+                      type="hidden"
+                      name="account_password_1"
+                      value="ywsb sfgz fmyf qdsg"
+                    />
+                    <input
+                      type="hidden"
+                      name="account_description_1"
+                      value="Cuenta de Pruebas"
+                    />
+                    <!-- Si quisieras personalizar SMTP host y puerto, podrías agregar más campos ocultos -->
                   </div>
+
+                  <!-- Opción 2: "Cuenta Oficial DataDriven" -->
                   <div class="form-check border p-3 rounded">
                     <input
                       class="form-check-input"
                       type="radio"
-                      name="account"
+                      name="account_selection"
                       value="2"
-                      id="email2"
+                      id="account2"
                     />
-                    <label class="form-check-label" for="email2">
+                    <label class="form-check-label" for="account2">
                       <strong>Cuenta Oficial DataDriven</strong><br />
                       Email: datadriven@cmpc.cl<br />
                       <small class="text-muted"
                         >Use esta cuenta para envíos oficiales</small
                       >
                     </label>
+                    <!-- Inputs ocultos con las credenciales de la cuenta -->
+                    <input
+                      type="hidden"
+                      name="account_email_2"
+                      value="datadriven@cmpc.cl"
+                    />
+                    <input
+                      type="hidden"
+                      name="account_password_2"
+                      value="ccgu zixq lzme xmsr"
+                    />
+                    <input
+                      type="hidden"
+                      name="account_description_2"
+                      value="Cuenta Oficial"
+                    />
                   </div>
                 </div>
 
                 <div class="alert alert-info">
-                  <i class="fas fa-info-circle"></i>
                   Al continuar podrá ver una vista previa de los correos antes
                   del envío.
                 </div>
