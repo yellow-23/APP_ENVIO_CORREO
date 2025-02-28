@@ -317,7 +317,7 @@ def create_app() -> FastAPI:
     async def send_emails_route(request: Request):
         """
         Envía los correos para cada email encontrado en el DataFrame,
-        agrupando la información y registrando en un historial.
+        replicando la vista previa pero enviando los correos.
         """
         global current_df
         if current_df is None:
@@ -330,111 +330,116 @@ def create_app() -> FastAPI:
             return RedirectResponse(url="/select_account", status_code=status.HTTP_302_FOUND)
 
         smtp_config = SMTP_CONFIG[account_id]
-        
-        # Identificar la columna de email (simplificado para evitar redirecciones)
+
         email_column = None
         for possible_column in ["Data Owner", "RESPONSABLE_EMAIL", "Email", "Correo"]:
             if possible_column in current_df.columns:
                 email_column = possible_column
                 break
-        
+
         if not email_column:
             request.session["messages"] = ["No se encontró la columna de correos electrónicos"]
             return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
-        # Historial de envíos
-        history = {
-            "sent_emails": [],
-            "errors": [],
-            "total_domains": 0,
-            "total_recipients": 0,
-        }
+        if "Area datos" not in current_df.columns:
+            request.session["messages"] = ["No se encontró la columna 'Area datos' requerida"]
+            return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
-        # Unir Data Owner y Data Steward para sacar lista de correos
-        try:
-            if "Data Owner" in current_df.columns and "Data Steward" in current_df.columns:
-                unique_emails = pd.concat(
-                    [current_df["Data Owner"].dropna(), current_df["Data Steward"].dropna()]
-                ).unique()
-            else:
-                unique_emails = current_df[email_column].dropna().unique()
-        except Exception as e:
-            logger.error(f"Error al obtener lista de correos: {str(e)}")
-            request.session["messages"] = [f"Error al procesar los correos: {str(e)}"]
-            return RedirectResponse(url="/preview_emails", status_code=status.HTTP_302_FOUND)
+        grouped = current_df.groupby(["Area datos", email_column], dropna=True)
+        sent_emails = []
+        domains_set = set()  # Conjunto de áreas de datos únicas
+        total_reports = 0
 
-        for email in unique_emails:
+        for (area_datos, email), rows in grouped:
+            area_datos = area_datos.strip() if isinstance(area_datos, str) else "Área no especificada"
+            domains_set.add(area_datos)  # Agregamos el área como un "dominio"
+            
+            tabla_filas = ""
+            for _, row in rows.iterrows():
+                reporte = str(row.get("Nombre Reporte", row.get("nombre reporte", row.get("Reporte", ""))))
+                workspace = str(row.get("Workspace", row.get("workspace", "")))
+                tabla_filas += f"""
+                    <tr>
+                        <td style=\"border: 1px solid #ddd; padding: 8px;\">{reporte}</td>
+                        <td style=\"border: 1px solid #ddd; padding: 8px;\">{workspace}</td>
+                    </tr>
+                """
+
+            template_path = os.path.join(template_dir, "gmail_template.html")
+            with open(template_path, "r", encoding="utf-8") as file:
+                template_html = file.read()
+
+            html_content = template_html.replace("{{ email }}", str(email))
+            html_content = html_content.replace("{{ area_datos }}", area_datos)
+            html_content = html_content.replace("{{ tabla_filas|safe }}", tabla_filas)
+
+            subject = f"Reporte CMPC - {datetime.now().strftime('%d/%m/%Y')} - {area_datos}"
+            
             try:
-                # Filtrar las filas de este correo
-                df_filtered = current_df[current_df[email_column] == email]
-                if df_filtered.empty:
-                    continue
-
-                domain = get_email_domain(str(email))
-                tabla_filas = ""
-
-                for _, row in df_filtered.iterrows():
-                    reporte = str(row.get("Nombre Reporte", row.get("Reporte", "")))
-                    workspace = str(row.get("Workspace", ""))
-                    tabla_filas += f"""
-                        <tr>
-                            <td style="border: 1px solid #ddd; padding: 8px;">{reporte}</td>
-                            <td style="border: 1px solid #ddd; padding: 8px;">{workspace}</td>
-                        </tr>
-                    """
-
-                # Renderizar template
-                template_path = os.path.join(template_dir, "gmail_template.html")
-                with open(template_path, "r", encoding="utf-8") as file:
-                    template_html = file.read()
-
-                html_content = template_html.replace("{{ email }}", str(email))
-                html_content = html_content.replace("{{ dominio }}", domain)
-                html_content = html_content.replace("{{ tabla_filas|safe }}", tabla_filas)
-
-                subject = f"Reporte CMPC - {datetime.now().strftime('%d/%m/%Y')} - {domain}"
                 await send_email(smtp_config, [email], subject, html_content)
-
-                history["sent_emails"].append(
-                    {
-                        "recipient": email,
-                        "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        "total_reports": len(df_filtered),
-                        "domains": [domain],
-                    }
-                )
-
+                
+                # Aumentar conteo de reportes
+                reports_count = len(rows)
+                total_reports += reports_count
+                
+                # Agregar al historial
+                sent_emails.append({
+                    "recipient": email,
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "reports": reports_count,
+                    "cc_count": 0,  # No usamos CC en este caso
+                    "area_datos": area_datos,
+                    "status": "Enviado"
+                })
+                
             except Exception as e:
                 error_msg = f"Error enviando a {email}: {str(e)}"
                 logger.error(error_msg)
-                history["errors"].append(error_msg)
+                
+                # Agregar al historial con estado de error
+                sent_emails.append({
+                    "recipient": email,
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "reports": len(rows),
+                    "cc_count": 0,
+                    "area_datos": area_datos,
+                    "status": "Error",
+                    "error_detail": str(e)
+                })
 
-        # Estadísticas finales
-        history["total_domains"] = len({dom for item in history["sent_emails"] for dom in item["domains"]})
-        history["total_recipients"] = len(history["sent_emails"])
+        # Estructura para la plantilla basada en el diseño proporcionado
+        history_data = {
+            "sender_email": smtp_config["email"],
+            "account_type": smtp_config["account_type"],
+            "sent_emails": sent_emails,
+            "total_sent": len(sent_emails),
+            "total_reports": total_reports,
+            "total_domains": len(domains_set),  # Número de áreas únicas
+            "areas_datos": list(domains_set),  # Lista de áreas de datos
+            "success_count": len([e for e in sent_emails if e["status"] == "Enviado"]),
+            "has_errors": any(e["status"] == "Error" for e in sent_emails)
+        }
 
-        request.session["send_history"] = history
-        if history["errors"]:
-            request.session["messages"] = [
-                "Proceso completado con algunos errores. Revise el historial."
-            ]
-        else:
-            request.session["messages"] = ["Correos enviados exitosamente."]
-
-        return RedirectResponse(url="/envio_realizado", status_code=status.HTTP_302_FOUND)
+        request.session["send_history"] = history_data
+        
+        return templates.TemplateResponse(
+            "envio_realizado.html",
+            {"request": request, "history": history_data}
+        )
 
     @app.get("/envio_realizado", response_class=HTMLResponse)
     async def envio_realizado(request: Request):
         """
         Muestra un resumen del envío de correos en la plantilla correspondiente.
         """
-        history = request.session.get("send_history")
+        history = request.session.get("send_history", {})
         if not history:
+            request.session["messages"] = ["No hay historial de envío disponible"]
             return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
 
         return templates.TemplateResponse(
             "envio_realizado.html",
-            {"request": request, "history": history},
+            {"request": request, "history": history}
         )
 
     return app

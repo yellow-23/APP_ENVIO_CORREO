@@ -18,6 +18,18 @@
         padding: 2rem 0;
         margin-bottom: 2rem;
       }
+      .error-banner {
+        background-color: #dc3545;
+        color: white;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+      }
+      .warning-banner {
+        background-color: #ffc107;
+        color: #212529;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+      }
       .history-card {
         border-left: 4px solid #28a745;
         margin-bottom: 15px;
@@ -25,6 +37,9 @@
         border-radius: 4px;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
         transition: all 0.3s ease;
+      }
+      .history-card.error {
+        border-left: 4px solid #dc3545;
       }
       .history-card:hover {
         transform: translateY(-2px);
@@ -62,30 +77,34 @@
     </style>
   </head>
   <body>
-    <div class="container pb-5">
-      <!-- Banner de estado -->
-      <div class="success-banner text-center {% if has_errors %}bg-warning{% endif %}">
-        <h1>
-          {% if not has_errors %}
-          <i class="fas fa-check-circle"></i> ¡Proceso Completado!
-          {% else %}
-          <i class="fas fa-exclamation-triangle"></i> Proceso Completado con Advertencias
-          {% endif %}
-        </h1>
-        <p class="mb-0">
-          {% if history.sent_emails %}
-          Se enviaron {{ history.total_recipients }} correos exitosamente
-          {% if history.errors %}
-          ({{ history.errors|length }} errores)
-          {% endif %}
-          {% else %}
-          No se pudieron enviar los correos
-          {% endif %}
-        </p>
-        <p class="mt-2">Tasa de éxito: {{ history.success_rate }}</p>
-      </div>
+    {% if not history.has_errors and history.success_count == history.total_sent
+    %}
+    <div class="success-banner text-center">
+      <h1><i class="fas fa-check-circle"></i> ¡Proceso Completado!</h1>
+      <p class="mb-0">Los correos fueron enviados exitosamente</p>
+      <p>Tasa de éxito: {{ history.success_count }}/{{ history.total_sent }}</p>
+    </div>
+    {% elif history.success_count > 0 and history.success_count <
+    history.total_sent %}
+    <div class="warning-banner text-center">
+      <h1>
+        <i class="fas fa-exclamation-triangle"></i> ¡Proceso Completado con
+        Advertencias!
+      </h1>
+      <p class="mb-0">Algunos correos no pudieron ser enviados</p>
+      <p>Tasa de éxito: {{ history.success_count }}/{{ history.total_sent }}</p>
+    </div>
+    {% else %}
+    <div class="error-banner text-center">
+      <h1>
+        <i class="fas fa-times-circle"></i> ¡Proceso Completado con Errores!
+      </h1>
+      <p class="mb-0">No se pudieron enviar los correos</p>
+      <p>Tasa de éxito: {{ history.success_count }}/{{ history.total_sent }}</p>
+    </div>
+    {% endif %}
 
-      <!-- Información del Envío -->
+    <div class="container pb-5">
       <div class="row mb-4">
         <div class="col-12">
           <div class="card">
@@ -95,17 +114,20 @@
                 <strong>Cuenta utilizada:</strong> {{ history.sender_email }}
                 ({{ history.account_type }})
               </p>
-              <p><strong>Fecha y hora:</strong> {{ history.timestamp }}</p>
+              <p>
+                <strong>Fecha y hora:</strong> {{
+                history.sent_emails[0].timestamp if history.sent_emails else 'No
+                disponible' }}
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Estadísticas -->
       <div class="row mb-4">
         <div class="col-md-4">
           <div class="stat-card">
-            <div class="stat-number">{{ history.total_recipients }}</div>
+            <div class="stat-number">{{ history.total_sent }}</div>
             <div>Destinatarios</div>
           </div>
         </div>
@@ -118,87 +140,55 @@
         <div class="col-md-4">
           <div class="stat-card">
             <div class="stat-number">{{ history.total_domains }}</div>
-            <div>Dominios Totales</div>
+            <div>Áreas de Datos</div>
           </div>
         </div>
       </div>
 
-      {% if history.errors %}
-      <div class="alert alert-warning mt-4">
-        <h5><i class="fas fa-exclamation-triangle"></i> Errores Encontrados</h5>
-        <ul class="mb-0">
-          {% for error in history.errors %}
-          <li>{{ error }}</li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
-
-      <!-- Detalle por Destinatario -->
       <h4 class="mb-3">Detalle por Destinatario</h4>
       {% for email in history.sent_emails %}
-      <div class="history-card p-3">
+      <div
+        class="history-card p-3 {% if email.status == 'Error' %}error{% endif %}"
+      >
         <div class="d-flex justify-content-between align-items-center mb-2">
           <h5 class="mb-0">{{ email.recipient }}</h5>
-          <span class="badge bg-secondary">{{ email.timestamp }}</span>
+          <span
+            class="badge {% if email.status == 'Error' %}bg-danger{% else %}bg-success{% endif %}"
+          >
+            {{ email.status }}
+          </span>
         </div>
         <div class="row mb-2">
           <div class="col-md-6">
             <small class="text-muted">Reportes enviados:</small>
-            <strong>{{ email.total_reports }}</strong>
+            <strong>{{ email.reports }}</strong>
           </div>
           <div class="col-md-6">
-            <small class="text-muted">Dominios:</small>
-            <strong>{{ email.domains|length }}</strong>
+            <small class="text-muted">Hora:</small>
+            <strong>{{ email.timestamp }}</strong>
           </div>
         </div>
         <div>
-          <small class="text-muted">Dominios:</small><br />
-          {% for domain in email.domains %}
-          <span class="domain-badge">{{ domain }}</span>
-          {% endfor %}
+          <small class="text-muted">Área de Datos:</small><br />
+          <span class="domain-badge">{{ email.area_datos }}</span>
         </div>
+        {% if email.status == 'Error' and email.error_detail %}
+        <div class="mt-2 text-danger">
+          <small>Error: {{ email.error_detail }}</small>
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
 
-      <!-- Botones de acción -->
       <div class="d-flex justify-content-between mt-4 no-print">
-        <div>
-          <button onclick="window.print()" class="btn btn-secondary me-2">
-            <i class="fas fa-print"></i> Imprimir Resumen
-          </button>
-          {% if history.errors %}
-          <button onclick="showErrors()" class="btn btn-warning">
-            <i class="fas fa-exclamation-triangle"></i> Ver Errores
-          </button>
-          {% endif %}
-        </div>
+        <button onclick="window.print()" class="btn btn-secondary">
+          <i class="fas fa-print"></i> Imprimir Resumen
+        </button>
         <a href="/" class="btn btn-success">
           <i class="fas fa-home"></i> Volver al Inicio
         </a>
       </div>
     </div>
-
-    {% if history.errors %}
-    <script>
-      function showErrors() {
-        const errorMessages = JSON.parse('{{ history.errors|tojson|safe }}');
-        const errorList = errorMessages.join('\n\n');
-        const dialog = document.createElement('dialog');
-        dialog.innerHTML = `
-            <div class="p-3">
-                <h4>Errores Encontrados</h4>
-                <pre style="max-height: 400px; overflow-y: auto;">${errorList}</pre>
-                <button onclick="this.closest('dialog').close()" class="btn btn-secondary">
-                    Cerrar
-                </button>
-            </div>
-        `;
-        document.body.appendChild(dialog);
-        dialog.showModal();
-      }
-    </script>
-    {% endif %}
 
     <script src="https://kit.fontawesome.com/a076d05399.js"></script>
   </body>
