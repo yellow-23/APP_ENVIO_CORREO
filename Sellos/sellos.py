@@ -193,6 +193,7 @@ def create_app() -> FastAPI:
             with open(template_path, "r", encoding="utf-8") as file:
                 template = file.read()
 
+            # Retorna el contenido HTML final
             return (
                 template.replace("{contenido_reportes}", "".join(contenido_dominios))
                 .replace("{owner_email}", str(owner_email))
@@ -260,7 +261,7 @@ def create_app() -> FastAPI:
                             reportes_por_dominio[dominio] = []
                         reportes_por_dominio[dominio].append(row)
 
-                    # Crear y enviar correo
+                    # Crear contenido HTML
                     html_content = crear_contenido_html(reportes_por_dominio, owner)
                     if not html_content:
                         continue
@@ -271,10 +272,11 @@ def create_app() -> FastAPI:
                     msg["Subject"] = "Reportes pendientes de asignación de sello de Negocio"
                     msg.attach(MIMEText(html_content, "html"))
 
-                    # Manejar CC (DataStewards) si procede
+                    # Manejo de CC
                     cc_list = []
                     stewards = owner_df["DataStewards"].dropna().unique()
                     for steward in stewards:
+                        # Cada steward puede tener varias direcciones separadas por coma
                         cc_list.extend(
                             [
                                 email.strip()
@@ -282,10 +284,19 @@ def create_app() -> FastAPI:
                                 if "@" in email.strip()
                             ]
                         )
-                    if cc_list:
-                        msg["Cc"] = ", ".join(set(cc_list))
 
+                    # Agregamos siempre a Carolina a la lista de copias
+                    cc_list.append("carolina.reydeduarte@cmpc.com")
+
+                    # Usamos un set para evitar duplicados
+                    cc_list = list(set(cc_list))
+
+                    if cc_list:
+                        msg["Cc"] = ", ".join(cc_list)
+
+                    # Recipientes finales
                     recipients = [owner] + cc_list
+
                     server.send_message(msg, to_addrs=recipients)
 
                     # Actualizar estado en el DataFrame original
@@ -645,3 +656,4 @@ if __name__ == "__main__":
         port=8000,
         reload=True
     )
+

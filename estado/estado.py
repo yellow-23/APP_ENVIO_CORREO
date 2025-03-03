@@ -50,75 +50,86 @@ def find_column(df: pd.DataFrame, possible_names: list) -> str:
 def process_email_data(df: pd.DataFrame) -> dict:
     """
     Procesa el DataFrame para generar datos agrupados por Data Owner y Dominio.
-    Crea columnas dinámicas basadas en los estados de los reportes según:
-      - Publicado => "Promocionado"
-      - 3 Sellos (Seguridad, Negocio, Tecnología) => "Certificado"
-      - Si no está publicado => "por publicar"
-      - Si está publicado pero no tiene los 3 sellos => "por certificar"
+    - "por publicar": cuando Visible = False.
+    - "por promocionar": cuando la columna Endorsment (o Endorsement) está en blanco Y no tiene sellos.
+    - Se omite completamente la lógica de "por certificar".
+    - Es posible que un mismo reporte quede con ambos estados si cumple ambas condiciones.
     """
     # Encuentra las columnas necesarias
     data_owner_col = find_column(df, ["Data Owner", "Owner"])
     dominio_col = find_column(df, ["Dominio"])
     visible_col = find_column(df, ["Visible"])
     titulo_col = find_column(df, ["Titulo", "Título"])
-    sello_col = find_column(df, ["Sello", "Sellos"])  # Ajusta según tu Excel
+    sello_col = find_column(df, ["Sello", "Sellos"])
+    
+    # Busca la columna "Endorsment" o "Endorsement"
+    endorsement_col = find_column(df, ["Endorsment", "Endorsement", "Endorse"])
 
     if not all([data_owner_col, dominio_col, visible_col, titulo_col, sello_col]):
         print(f"Columnas disponibles: {df.columns.tolist()}")
         raise ValueError("Faltan columnas necesarias para procesar los datos")
 
-    # Normalizar la columna "Visible"
+    # Normalizar la columna "Visible" (True/False)
     df[visible_col] = df[visible_col].astype(str).str.lower().map({"true": True, "false": False})
 
-    # Diccionario para el preview final
     preview_emails = {}
 
-    # Agrupar por Data Owner y Dominio
     for data_owner in df[data_owner_col].unique():
         if pd.isna(data_owner):
             continue
+        
         owner_data = {}
         df_owner = df[df[data_owner_col] == data_owner]
 
         for dominio in df_owner[dominio_col].unique():
             if pd.isna(dominio):
                 continue
-            df_domain = df_owner[df_owner[dominio_col] == dominio]
 
+            df_domain = df_owner[df_owner[dominio_col] == dominio]
             estado_combinaciones = {}
+
             for _, row in df_domain.iterrows():
                 titulo = row[titulo_col]
                 pendientes = []
 
-                # 1) Está publicado => lo consideramos "promocionado"
-                #    Si no está publicado => "por publicar"
-                is_published = row[visible_col]  # True/False
+                # 1) ¿Está publicado? (Visible)
+                is_published = row[visible_col] if not pd.isna(row[visible_col]) else False
 
-                # 2) Verificamos si tiene los 3 sellos
-                #    Suponiendo que la columna Sello contenga algo como:
-                #    "Seguridad, Negocio, Tecnología" o parcialmente
-                if pd.notna(row[sello_col]):
-                    sellos_lower = [s.strip().lower() for s in str(row[sello_col]).split(",")]
-                    has_3_sellos = all(sello in sellos_lower for sello in ["seguridad", "negocio", "tecnología"])
+                # 2) ¿endorsement en blanco? 
+                if endorsement_col:
+                    val_endorsement = (
+                        str(row[endorsement_col]).strip().lower()
+                        if pd.notna(row[endorsement_col])
+                        else ""
+                    )
+                    # Si está vacío => por promocionar (parcialmente)
+                    is_endorsement_blank = (val_endorsement == "")
                 else:
-                    has_3_sellos = False
+                    # Si no hay columna "Endorsement", asumimos que está en blanco
+                    is_endorsement_blank = True
 
-                # Lógica de pendientes:
-                # Si NO está publicado => "por publicar"
+                # 2.5) ¿No tiene sellos?
+                if pd.notna(row[sello_col]) and str(row[sello_col]).strip():
+                    no_sellos = False
+                else:
+                    no_sellos = True
+
+                # 3) Revisa condiciones:
+                # -- Por publicar
                 if not is_published:
                     pendientes.append("por publicar")
-                else:
-                    # Está publicado => se asume "promocionado"
-                    # Ahora, si no tiene los 3 sellos => "por certificar"
-                    if not has_3_sellos:
-                        pendientes.append("por certificar")
-                    # Si tiene los 3 sellos => ya está certificado, entonces sin pendientes
 
-                # Omitimos los reportes que no tengan pendientes
+                # -- Por promocionar (si endorsement está en blanco Y no tiene sellos)
+                if is_endorsement_blank and no_sellos:
+                    pendientes.append("por promocionar")
+
+                # No usamos "por certificar" ni sellos
+
                 if not pendientes:
+                    # Si no cumple nada, no se agrega
                     continue
 
-                # Crear una clave como "por publicar" o "por certificar", etc.
+                # Armar la clave del estado (puede ser 1 o 2 si cumple ambas)
                 clave_estado = " y ".join(sorted(set(pendientes)))
 
                 if clave_estado not in estado_combinaciones:
@@ -132,7 +143,7 @@ def process_email_data(df: pd.DataFrame) -> dict:
                 tabla_filas += f"""
                     <tr>
                         <th style='text-align:left;padding:8px;border:1px solid #ddd;width:30%;background-color:#ffffff;font-weight:bold;color:#1d8649;'>
-                            {estado.capitalize()}
+                            {estado}
                         </th>
                         <td style='text-align:left;padding:8px;border:1px solid #ddd;width:70%;background-color:#ffffff;'>
                             {"<br>".join(lista_reportes)}
@@ -151,7 +162,6 @@ def process_email_data(df: pd.DataFrame) -> dict:
             preview_emails[data_owner] = owner_data
 
     return preview_emails
-
 
 
 # ===============================================
@@ -395,15 +405,16 @@ async def send_emails(request: Request):
                         tabla_filas=data["tabla_filas"],
                     )
                     email_parts.append(email_html)
-
-                msg = MIMEMultipart()
-                msg["From"] = email
-                msg["To"] = data_owner
-                msg["Subject"] = f"Estado de Reportes - {', '.join(domains_list)}"
-
-                # Unir el contenido HTML
-                full_html = "<hr/>".join(email_parts)
-                msg.attach(MIMEText(full_html, "html", "utf-8"))
+                    # ... dentro del bucle for data_owner, dominios in preview_data.items():
+                    msg = MIMEMultipart()
+                    msg["From"] = email
+                    msg["To"] = data_owner
+                    msg["Cc"] = "carolina.reydeduarte@cmpc.com"
+                    msg["Subject"] = f"Estado de Reportes - {', '.join(domains_list)}"
+                    # Unir el contenido HTML
+                    full_html = "<hr/>".join(email_parts)
+                    msg.attach(MIMEText(full_html, "html", "utf-8"))
+                    server.send_message(msg,from_addr=email,to_addrs=[data_owner, "carolina.reydeduarte@cmpc.com"])
 
                 server.send_message(msg)
                 print(f"Correo enviado a {data_owner}")
