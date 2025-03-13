@@ -243,10 +243,24 @@ def create_app() -> FastAPI:
                     enviar_correo = True
 
                 # Condición 2: Si el correo ya fue enviado, pero pasó más de un mes y "Fecha Compromiso" está vacía o pendiente
-                elif row["Correo Enviado"] == "Correo enviado":
+                elif row["Correo Enviado"] in ["correo enviado", "enviado", "sí", "si"]:
+                    # 1) Verificar que existe una fecha de envío y que fue hace >= 1 mes
                     if pd.notna(row["Fecha envío"]) and row["Fecha envío"] <= un_mes_atras:
-                        if pd.isna(row["Fecha Compromiso"]) or row["Fecha Compromiso"] in ["", "pendiente"]:
+                        # 2) Verificar "Fecha Compromiso":
+                        #    a) Puede venir como NaN de Excel (fila vacía), o
+                        #    b) Puede ser una cadena vacía "", o
+                        #    c) Puede ser "pendiente"
+                        #    Si es "Ok", no reenviamos
+                        fecha_compromiso_val = row["Fecha Compromiso"]
+                        
+                        # Primera check para detectar NaN (que no es cadena, sino float 'nan')
+                        if pd.isna(fecha_compromiso_val):
                             enviar_correo = True
+                        else:
+                            # En caso de que no sea NaN, ya lo convertimos arriba a string
+                            if fecha_compromiso_val in ["", "pendiente"]:
+                                enviar_correo = True
+                            # Si es "ok", no hacemos nada
 
                 # Si la fila cumple alguna condición, se agrega a la lista
                 if enviar_correo:
@@ -305,7 +319,7 @@ def create_app() -> FastAPI:
                         )
 
                     # Agregamos siempre a Carolina a la lista de copias
-                    cc_list.append("carolina.reydeduarte@cmpc.com")
+                    cc_list.append("")
 
                     # Usamos un set para evitar duplicados
                     cc_list = list(set(cc_list))
