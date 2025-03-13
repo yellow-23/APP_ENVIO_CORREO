@@ -106,7 +106,7 @@ def create_app() -> FastAPI:
             return ""
         title = str(title)
         workspace_start = title.find(" - [")
-        if workspace_start != -1:
+        if (workspace_start != -1):
             title = title[:workspace_start]
         return title.strip().replace(".docx", "")
 
@@ -220,24 +220,43 @@ def create_app() -> FastAPI:
                     [],
                 )
 
-            # Validación básica de columnas requeridas
-            expected_columns = [
-                "Dominio",
-                "Workspace.Title",
-                "SelloTécnico",
-                "SelloNegocio",
-                "SelloSeguridad",
-                "Titulo",
-                "DataOwner_Lgobierno",
-                "DataStewards",
-                "Responsable",
-            ]
-            missing_columns = [col for col in expected_columns if col not in df.columns]
-            if missing_columns:
-                return "Error: Formato de Excel inválido (faltan columnas)", []
+            # Normalizar valores de "Correo Enviado"
+            df["Correo Enviado"] = df["Correo Enviado"].astype(str).str.lower().str.strip()
 
-            # Filtrar reportes (ejemplo: excluir los que ya tengan SelloNegocio=True)
-            df_filtered = df[~df["SelloNegocio"]]
+            # Convertir fechas correctamente
+            df["Fecha envío"] = pd.to_datetime(df["Fecha envío"], errors='coerce')
+            df["Fecha Compromiso"] = df["Fecha Compromiso"].astype(str).str.lower().str.strip()
+
+            # Definir el umbral de 1 mes
+            fecha_actual = pd.Timestamp.now()
+            un_mes_atras = fecha_actual - pd.DateOffset(months=1)
+
+            # Lista para almacenar las filas que sí cumplen con las condiciones
+            filas_a_enviar = []
+
+            # Recorrer fila por fila y aplicar las condiciones
+            for _, row in df.iterrows():
+                enviar_correo = False  # Flag para determinar si la fila debe incluirse
+
+                # Condición 1: Si "Correo Enviado" es "No" en cualquier forma
+                if row["Correo Enviado"] in ["no", "n", "no.", "n."]:
+                    enviar_correo = True
+
+                # Condición 2: Si el correo ya fue enviado, pero pasó más de un mes y "Fecha Compromiso" está vacía o pendiente
+                elif row["Correo Enviado"] == "Correo enviado":
+                    if pd.notna(row["Fecha envío"]) and row["Fecha envío"] <= un_mes_atras:
+                        if pd.isna(row["Fecha Compromiso"]) or row["Fecha Compromiso"] in ["", "pendiente"]:
+                            enviar_correo = True
+
+                # Si la fila cumple alguna condición, se agrega a la lista
+                if enviar_correo:
+                    filas_a_enviar.append(row)
+
+            # Crear un DataFrame solo con las filas que deben enviarse
+            df_filtrado = pd.DataFrame(filas_a_enviar)
+
+            if df_filtrado.empty:
+                return "No hay correos que enviar", []
 
             # Credenciales SMTP
             sender_email, app_password, _ = SMTP_CONFIG[email_option]
@@ -248,7 +267,7 @@ def create_app() -> FastAPI:
                 server.login(sender_email, app_password)
 
                 # Agrupar por Data Owner
-                grouped = df_filtered.groupby("DataOwner_Lgobierno")
+                grouped = df_filtrado.groupby("DataOwner_Lgobierno")
                 for owner, owner_df in grouped:
                     if not pd.notna(owner) or "@" not in str(owner):
                         continue
@@ -300,10 +319,8 @@ def create_app() -> FastAPI:
                     server.send_message(msg, to_addrs=recipients)
 
                     # Actualizar estado en el DataFrame original
-                    df.loc[df["DataOwner_Lgobierno"] == owner, "Estado Solicitudes"] = "Correo enviado"
-                    df.loc[df["DataOwner_Lgobierno"] == owner, "Fecha envío"] = pd.Timestamp.now().strftime(
-                        "%Y-%m-%d"
-                    )
+                    df.loc[df["DataOwner_Lgobierno"] == owner, "Correo Enviado"] = "Correo enviado"
+                    df.loc[df["DataOwner_Lgobierno"] == owner, "Fecha Envío"] = fecha_actual.strftime("%Y-%m-%d")
 
                     # Registrar en historial
                     history_items.append(
